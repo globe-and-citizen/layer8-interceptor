@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"globe-and-citizen/layer8-interceptor/internals"
+	"time"
 
 	"net/http"
 	"strings"
@@ -34,7 +36,7 @@ var (
 	UUID               string
 )
 
-// var L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port)
+// var L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port) // Ravi TODO this should probably be revisited
 
 func main() {
 	// Create channel to keep the Go thread alive
@@ -54,6 +56,7 @@ func main() {
 		"persistenceCheck":    js.FuncOf(persistenceCheck),
 		"initEncryptedTunnel": js.FuncOf(initializeECDHTunnel),
 		"fetch":               js.FuncOf(fetch),
+		"static":              js.FuncOf(getStatic),
 	}))
 
 	// Developer Warnings:
@@ -247,14 +250,14 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		}
 
 		// set the UpJWT to the headers
-		fmt.Println("Setting up_jwt to the headers: ", UpJWT)
+		fmt.Println("Setting up_jwt to the headers: ", UpJWT) // Ravi TODO -- does adding these two headers additions leak info?
 		headers.Set("up-jwt", UpJWT)
 
 		// set the UUID to the headers
 		fmt.Println("Setting x-client-uuid to the headers: ", UUID)
 		headers.Set("x-client-uuid", UUID)
 
-		// setting the body to an empty string if it's undefined
+		// setting the body to an empty string if it's undefined // Ravi TODO -- is this actually unnecessary?
 		body := options.Get("body").String()
 		if body == "<undefined>" {
 			body = ""
@@ -266,18 +269,158 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			return nil
 		}))
 
-		// Print the headersMap for debugging purposes
-		for k, v := range headersMap {
-			fmt.Println("Encrypted Headers from the SP: ", k, v)
+		// set the content-type to application/json if it's undefined
+		if _, ok := headersMap["Content-Type"]; !ok {
+			headersMap["Content-Type"] = "application/json"
 		}
 
 		go func() {
 			// forward request to the layer8 proxy server
-			fmt.Println("userSymmetricKey", userSymmetricKey)
 			// res := L8Client.
 			// 	Do(url, utils.NewRequest(method, headersMap, []byte(body)), userSymmetricKey)
-			res := internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(url, utils.NewRequest(method, headersMap, []byte(body)), userSymmetricKey)
+			// res := internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(url, utils.NewRequest(method, headersMap, []byte(body)), userSymmetricKey)
+			var res *utils.Response
 
+			switch strings.ToLower(headersMap["Content-Type"]) {
+			case "application/json":
+				// setting the body to an empty string if it's undefined
+				body := options.Get("body")
+				if body.String() == "<undefined>" {
+					body = js.ValueOf(map[string]interface{}{})
+				}
+
+				// convert the body to a map
+				bodyMap := map[string]interface{}{}
+				err := json.Unmarshal([]byte(body.String()), &bodyMap)
+				if err != nil {
+					reject.Invoke(js.Global().Get("Error").New(err.Error()))
+					return
+				}
+
+				// encode the body to json
+				bodyByte, err := json.Marshal(bodyMap)
+				if err != nil {
+					reject.Invoke(js.Global().Get("Error").New(err.Error()))
+					return
+				}
+
+				// forward request to the layer8 proxy server
+				//res = L8Client.Do( // RAVI TODO: Get a single client working again.
+				res = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(
+					url, utils.NewRequest(method, headersMap, bodyByte),
+					userSymmetricKey, false, UpJWT, UUID)
+
+			case "multipart/form-data":
+				headersMap["Content-Type"] = "application/layer8.buffer+json"
+
+				body := options.Get("body")
+				if body.String() == "<undefined>" || body.String() == "null" {
+					reject.Invoke(js.Global().Get("Error").New("No body provided to fetch call."))
+					return
+				}
+
+				// get data from formdata
+				var (
+					dataLength = js.Global().Get("Array").Call("from", body.Call("keys")).Get("length").Int()
+					formdata   = make(map[string]interface{}, dataLength)
+				)
+
+				js.Global().Get("Array").Call("from", body.Call("keys")).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+					var (
+						key       = args[0].String()
+						value     = body.Call("get", key)
+						valueType = value.Get("constructor").Get("name").String()
+					)
+
+					switch valueType {
+					case "File":
+						value.Call("arrayBuffer").Call("then", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+							buff := make([]byte, value.Get("size").Int())
+							js.CopyBytesToGo(buff, js.Global().Get("Uint8Array").New(args[0]))
+
+							data := map[string]interface{}{
+								"_type": "File",
+								"name":  value.Get("name").String(),
+								"size":  value.Get("size").Int(),
+								"type":  value.Get("type").String(),
+								"buff":  base64.StdEncoding.EncodeToString(buff),
+							}
+
+							// because formdata can have multiple entries for the same key
+							// each key is an array of maps
+							if val, ok := formdata[key]; !ok {
+								formdata[key] = []map[string]interface{}{data}
+							} else {
+								formdata[key] = append(val.([]map[string]interface{}), data)
+							}
+							return nil
+						}))
+					case "String":
+						data := map[string]interface{}{
+							"_type": "String",
+							"value": value.String(),
+						}
+
+						if val, ok := formdata[key]; !ok {
+							formdata[key] = []map[string]interface{}{data}
+						} else {
+							formdata[key] = append(val.([]map[string]interface{}), data)
+						}
+					case "Number":
+						data := map[string]interface{}{
+							"_type": "Number",
+							"value": value.Float(),
+						}
+
+						if val, ok := formdata[key]; !ok {
+							formdata[key] = []map[string]interface{}{data}
+						} else {
+							formdata[key] = append(val.([]map[string]interface{}), data)
+						}
+					case "Boolean":
+						data := map[string]interface{}{
+							"_type": "Boolean",
+							"value": value.Bool(),
+						}
+
+						if val, ok := formdata[key]; !ok {
+							formdata[key] = []map[string]interface{}{data}
+						} else {
+							formdata[key] = append(val.([]map[string]interface{}), data)
+						}
+					default:
+						reject.Invoke(js.Global().Get("Error").New(fmt.Sprintf("Unsupported type: %s", valueType)))
+						return nil
+					}
+
+					return nil
+				}))
+
+				// wait for the formdata to be populated, this is a hacky way to do it, but it works for now
+				// having tried using a channel, it fails with a "fatal error: all goroutines are asleep - deadlock!"
+				// TODO: find a better way to do this
+				time.Sleep(100 * time.Millisecond)
+
+				// encode the body to json
+				bodyByte, err := json.Marshal(formdata)
+				if err != nil {
+					reject.Invoke(js.Global().Get("Error").New(err.Error()))
+					return
+				}
+
+				// forward request to the layer8 proxy server
+				//res = L8Client.Do( // RAVI TODO: Get a single client working again.
+				res = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(
+					url, utils.NewRequest(method, headersMap, bodyByte),
+					userSymmetricKey, false, UpJWT, UUID)
+			default:
+				res = &utils.Response{
+					Status:     400,
+					StatusText: "Content-Type not supported",
+				}
+			}
+
+			/// RAVI breakpoint ///
 			if res.Status >= 100 || res.Status < 300 { // Handle Success & Default Rejection
 				resHeaders := js.Global().Get("Headers").New()
 
@@ -303,4 +446,38 @@ func fetch(this js.Value, args []js.Value) interface{} {
 	promiseConstructor := js.Global().Get("Promise")
 	promise := promiseConstructor.New(js.FuncOf(promise_logic))
 	return promise
+}
+
+func getStatic(this js.Value, args []js.Value) interface{} {
+	url := args[0].String()
+
+	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		resolve := args[0]
+
+		go func() {
+			//res = L8Client.Do( // RAVI TODO: Get a single client working again.
+			resp := internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(
+				url, utils.NewRequest("GET", make(map[string]string), nil),
+				userSymmetricKey, true, UpJWT, UUID)
+
+			// convert response body to js arraybuffer
+			jsBody := js.Global().Get("Uint8Array").New(len(resp.Body))
+			js.CopyBytesToJS(jsBody, resp.Body)
+
+			// create a map of the response headers
+			resHeaders := js.Global().Get("Headers").New()
+			for k, v := range resp.Headers {
+				resHeaders.Call("append", js.ValueOf(k), js.ValueOf(v))
+			}
+
+			blob := js.Global().Get("Blob").New([]interface{}{jsBody}, js.ValueOf(map[string]interface{}{
+				"type": resHeaders.Call("get", js.ValueOf("content-type")),
+			}))
+			objURL := js.Global().Get("URL").Call("createObjectURL", blob)
+
+			resolve.Invoke(objURL)
+		}()
+
+		return nil
+	}))
 }

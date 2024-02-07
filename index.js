@@ -64,6 +64,12 @@ function triggerCallbacks() {
           reject(`Call to Layer8.${name} failed: ${error}`);
         }
         break;
+      case "static":
+        try{
+          resolve(await layer8.static(...args));
+        } catch(error){
+          reject(`Call to Layer8.${name} failed: ${erorr}`);
+        }
       default:
       // code block
     }
@@ -125,4 +131,13 @@ export default {
       }
     });
   },
+  static: (url) => {
+    return new Promise(async (resolve, reject) => {
+      if (l8Ready){
+        resolve(await layer8.static(url))
+      } else {
+        illGetBackToYou("static", resolve, reject, [url])
+      }
+    })
+  }
 };
