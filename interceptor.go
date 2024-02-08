@@ -144,7 +144,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			var err error
 			privJWK_ecdh, pubJWK_ecdh, err = utils.GenerateKeyPair(utils.ECDH)
 			if err != nil {
-				fmt.Println(err.Error())
+				fmt.Println("[Interceptor]", err.Error())
 				ETunnelFlag = false
 				reject.Invoke(js.Global().Get("Error").New("Unable to generate client key pair"))
 				return
@@ -152,8 +152,9 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 
 			b64PubJWK, err := pubJWK_ecdh.ExportAsBase64()
 			if err != nil {
-				fmt.Println(err.Error())
+				fmt.Println("[Interceptor]", err.Error())
 				ETunnelFlag = false
+				reject.Invoke(js.Global().Get("Error").New("Failed to Export publicJWK_ecdh"))
 				return
 			}
 
@@ -170,6 +171,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			if err != nil {
 				fmt.Println(err.Error())
 				ETunnelFlag = false
+				reject.Invoke(js.Global().Get("Error").New("Creation of initialization POST request failed. "))
 				return
 			}
 			uuid := uuid.New()
@@ -181,12 +183,13 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			resp, err := client.Do(req)
 			if err != nil {
 				fmt.Println(err.Error())
+				reject.Invoke(js.Global().Get("Error").New("Initialization POST request to Proxy failed. "))
 				ETunnelFlag = false
 				return
 			}
 
 			if resp.StatusCode == 401 {
-				fmt.Printf("User not authorized\n")
+				reject.Invoke(js.Global().Get("Error").New("401 response from proxy, user is not authorized. "))
 				ETunnelFlag = false
 				return
 			}
@@ -197,11 +200,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 
 			err = json.Unmarshal(Respbody, &data)
 			if err != nil {
-				if strings.Contains(err.Error(), "unexpected end of JSON input") {
-					fmt.Println("JSON data might be incomplete or improperly formatted.")
-				} else {
-					fmt.Println(err.Error())
-				}
+				reject.Invoke(js.Global().Get("Error").New("The data received from the proxy could not be unmarshalled: ", err.Error()))
 				ETunnelFlag = false
 				return
 			}
@@ -210,24 +209,25 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 
 			server_pubKeyECDH, err := utils.JWKFromMap(data)
 			if err != nil {
-				fmt.Println(err.Error())
+				reject.Invoke(js.Global().Get("Error").New(err.Error()))
 				ETunnelFlag = false
 				return
 			}
 
 			userSymmetricKey, err = privJWK_ecdh.GetECDHSharedSecret(server_pubKeyECDH)
 			if err != nil {
-				fmt.Println(err.Error())
+				reject.Invoke(js.Global().Get("Error").New(err.Error()))
 				ETunnelFlag = false
 				return
 			}
 
-			fmt.Println("up_jwt: ", UpJWT)
+			// fmt.Println("[Interceptor] UpJWT: ", UpJWT)
 
 			// TODO: Send an encrypted ping / confirmation to the server using the shared secret
 			// just like the 1. Syn 2. Syn/Ack 3. Ack flow in a TCP handshake
 			ETunnelFlag = true
-			fmt.Println("Encrypted tunnel successfully established.")
+			fmt.Println("[Interceptor] Encrypted tunnel successfully established.")
+			resolve.Invoke(true)
 			return
 		}()
 
