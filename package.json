@@ -3,6 +3,7 @@
   "version": "0.0.7",
   "description": "This package allows Layer8 clients to connect to the remote Layer8 Server. It povides the 1) stock WASM glue code 2) binary of the Interceptor, and 3) the index.js necessary to run it.   ",
   "main": "index.js",
+  "types": "index.d.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -27,6 +28,7 @@
   "files": [
     "./dist/interceptor.json",
     "./dist/wasm_exec.js",
+    "index.d.ts",
     "index.js"
   ]
 }

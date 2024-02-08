@@ -1,6 +1,4 @@
-// const _ = require("./dist/wasm_exec.js");
-// const wasmBin = require("./dist/interceptor.json");
-
+// IMPORTS
 import wasmBin from "./dist/interceptor.json";
 import "./dist/wasm_exec.js";
 
@@ -118,6 +116,7 @@ export default {
     return new Promise(async (resolve, reject) => {
       if (l8Ready) {
         if (config == null) {
+          console.log("me runin...")
           resolve(await layer8.fetch(url));
         } else {
           resolve(await layer8.fetch(url, config));

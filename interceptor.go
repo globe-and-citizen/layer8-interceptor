@@ -18,14 +18,13 @@ import (
 )
 
 // Declare global constants
-const INTERCEPTOR_VERSION = "1.0.0"
+const INTERCEPTOR_VERSION = "0.0.14"
 
 // Declare global variables
 var (
 	Layer8Scheme       string
 	Layer8Host         string
 	Layer8Port         string
-	Layer8Version      string
 	Layer8LightsailURL string
 	Counter            int
 	ETunnelFlag        bool
@@ -43,7 +42,6 @@ func main() {
 	c := make(chan struct{})
 
 	// Initialize global variables
-	Layer8Version = "1.0.2"
 	Layer8Scheme = ""
 	Layer8Host = ""
 	Layer8Port = ""
@@ -101,26 +99,44 @@ func persistenceCheck(this js.Value, args []js.Value) interface{} {
 }
 
 func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
-	// Create a go struct
-	configMap := make(map[string]string)
+	// Convert JS values into useable Golang variables
+	ServiceProviderURL := ""
+	Layer8Scheme := ""
+	Layer8Host := ""
+	Layer8Port := ""
+	ErrorDestructuringConfigObject := false
 
 	js.Global().Get("Object").Call("entries", args[0]).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		// fmt.Println("Key: ", args[0].Index(0).String())   // key
 		key := args[0].Index(0).String()
 		// fmt.Println("Value: ", args[0].Index(1).String()) // value
 		value := args[0].Index(1).String()
-		configMap[key] = value
+
+		switch key {
+		case "ServiceProviderURL":
+			ServiceProviderURL = value
+		case "Layer8Scheme":
+			Layer8Scheme = value
+		case "Layer8Host":
+			Layer8Host = value
+		case "Layer8Port":
+			Layer8Port = value
+		default:
+			ErrorDestructuringConfigObject = true
+		}
 		return nil
 	}))
 
-	// Assign Sensible Variable Names
-	SP_Backend := configMap["SP_Backend"]
-	Layer8Scheme = configMap["Layer8Scheme"]
-	Layer8Host = configMap["Layer8Host"]
-	Layer8Port = ":" + configMap["Layer8Port"]
+	if ErrorDestructuringConfigObject {
+		return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+			// resolve := args[0]
+			reject := args[1]
+			reject.Invoke(js.Global().Get("Error").New("Unable to destructure the Layer8 encrypted tunnel config object. "))
+			return nil
+		}))
+	}
 
 	// Run the Function
-
 	go func() {
 		var err error
 		privJWK_ecdh, pubJWK_ecdh, err = utils.GenerateKeyPair(utils.ECDH)
@@ -137,8 +153,14 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			return
 		}
 
-		ProxyURL := fmt.Sprintf("%s://%s%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, Layer8Port, SP_Backend)
-		fmt.Println(ProxyURL)
+		var ProxyURL string
+		if Layer8Port != "" {
+			ProxyURL = fmt.Sprintf("%s://%s:%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, Layer8Port, ServiceProviderURL)
+		} else {
+			ProxyURL = fmt.Sprintf("%s://%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, ServiceProviderURL)
+		}
+
+		// fmt.Println("[Interceptor]", ProxyURL)
 		client := &http.Client{}
 		req, err := http.NewRequest("POST", ProxyURL, bytes.NewBuffer([]byte(b64PubJWK)))
 		if err != nil {
@@ -232,6 +254,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		options := js.ValueOf(map[string]interface{}{
 			"method":  "GET", // Set HTTP "GET" request to be the default
 			"headers": js.ValueOf(map[string]interface{}{}),
+			"body":    "<undefined>",
 		})
 
 		if len(args) > 1 {
@@ -257,12 +280,6 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		fmt.Println("Setting x-client-uuid to the headers: ", UUID)
 		headers.Set("x-client-uuid", UUID)
 
-		// setting the body to an empty string if it's undefined // Ravi TODO -- is this actually unnecessary?
-		body := options.Get("body").String()
-		if body == "<undefined>" {
-			body = ""
-		}
-
 		headersMap := make(map[string]string)
 		js.Global().Get("Object").Call("entries", headers).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 			headersMap[args[0].Index(0).String()] = args[0].Index(1).String()
@@ -282,21 +299,20 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			var res *utils.Response
 
 			switch strings.ToLower(headersMap["Content-Type"]) {
-			case "application/json":
-				// setting the body to an empty string if it's undefined
+			case "application/json": // Note this is the default that GET requests travel through
+				// Converting the body to Golag or setting it as null/nil
+				bodyMap := map[string]interface{}{}
 				body := options.Get("body")
 				if body.String() == "<undefined>" {
-					body = js.ValueOf(map[string]interface{}{})
+					// body = js.ValueOf(map[string]interface{}{}) <= this will err out as "Uncaught (in promise) Error: invalid character '<' looking for beginning of value"
+					body = js.ValueOf("{}")
+				} else {
+					err := json.Unmarshal([]byte(body.String()), &bodyMap)
+					if err != nil {
+						reject.Invoke(js.Global().Get("Error").New(err.Error()))
+						return
+					}
 				}
-
-				// convert the body to a map
-				bodyMap := map[string]interface{}{}
-				err := json.Unmarshal([]byte(body.String()), &bodyMap)
-				if err != nil {
-					reject.Invoke(js.Global().Get("Error").New(err.Error()))
-					return
-				}
-
 				// encode the body to json
 				bodyByte, err := json.Marshal(bodyMap)
 				if err != nil {
