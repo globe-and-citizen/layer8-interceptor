@@ -136,98 +136,103 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 		}))
 	}
 
-	// Run the Function
-	go func() {
-		var err error
-		privJWK_ecdh, pubJWK_ecdh, err = utils.GenerateKeyPair(utils.ECDH)
-		if err != nil {
-			fmt.Println(err.Error())
-			ETunnelFlag = false
-			return
-		}
+	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		resolve := args[0]
+		reject := args[1]
 
-		b64PubJWK, err := pubJWK_ecdh.ExportAsBase64()
-		if err != nil {
-			fmt.Println(err.Error())
-			ETunnelFlag = false
-			return
-		}
-
-		var ProxyURL string
-		if Layer8Port != "" {
-			ProxyURL = fmt.Sprintf("%s://%s:%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, Layer8Port, ServiceProviderURL)
-		} else {
-			ProxyURL = fmt.Sprintf("%s://%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, ServiceProviderURL)
-		}
-
-		// fmt.Println("[Interceptor]", ProxyURL)
-		client := &http.Client{}
-		req, err := http.NewRequest("POST", ProxyURL, bytes.NewBuffer([]byte(b64PubJWK)))
-		if err != nil {
-			fmt.Println(err.Error())
-			ETunnelFlag = false
-			return
-		}
-		uuid := uuid.New()
-		UUID = uuid.String()
-		req.Header.Add("x-ecdh-init", b64PubJWK)
-		req.Header.Add("x-client-uuid", uuid.String())
-
-		// send request
-		resp, err := client.Do(req)
-		if err != nil {
-			fmt.Println(err.Error())
-			ETunnelFlag = false
-			return
-		}
-
-		if resp.StatusCode == 401 {
-			fmt.Printf("User not authorized\n")
-			ETunnelFlag = false
-			return
-		}
-
-		Respbody := utils.ReadResponseBody(resp.Body)
-
-		data := map[string]interface{}{}
-
-		err = json.Unmarshal(Respbody, &data)
-		if err != nil {
-			if strings.Contains(err.Error(), "unexpected end of JSON input") {
-				fmt.Println("JSON data might be incomplete or improperly formatted.")
-			} else {
+		go func() {
+			var err error
+			privJWK_ecdh, pubJWK_ecdh, err = utils.GenerateKeyPair(utils.ECDH)
+			if err != nil {
 				fmt.Println(err.Error())
+				ETunnelFlag = false
+				reject.Invoke(js.Global().Get("Error").New("Unable to generate client key pair"))
+				return
 			}
-			ETunnelFlag = false
+
+			b64PubJWK, err := pubJWK_ecdh.ExportAsBase64()
+			if err != nil {
+				fmt.Println(err.Error())
+				ETunnelFlag = false
+				return
+			}
+
+			var ProxyURL string
+			if Layer8Port != "" {
+				ProxyURL = fmt.Sprintf("%s://%s:%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, Layer8Port, ServiceProviderURL)
+			} else {
+				ProxyURL = fmt.Sprintf("%s://%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, ServiceProviderURL)
+			}
+
+			// fmt.Println("[Interceptor]", ProxyURL)
+			client := &http.Client{}
+			req, err := http.NewRequest("POST", ProxyURL, bytes.NewBuffer([]byte(b64PubJWK)))
+			if err != nil {
+				fmt.Println(err.Error())
+				ETunnelFlag = false
+				return
+			}
+			uuid := uuid.New()
+			UUID = uuid.String()
+			req.Header.Add("x-ecdh-init", b64PubJWK)
+			req.Header.Add("x-client-uuid", uuid.String())
+
+			// send request
+			resp, err := client.Do(req)
+			if err != nil {
+				fmt.Println(err.Error())
+				ETunnelFlag = false
+				return
+			}
+
+			if resp.StatusCode == 401 {
+				fmt.Printf("User not authorized\n")
+				ETunnelFlag = false
+				return
+			}
+
+			Respbody := utils.ReadResponseBody(resp.Body)
+
+			data := map[string]interface{}{}
+
+			err = json.Unmarshal(Respbody, &data)
+			if err != nil {
+				if strings.Contains(err.Error(), "unexpected end of JSON input") {
+					fmt.Println("JSON data might be incomplete or improperly formatted.")
+				} else {
+					fmt.Println(err.Error())
+				}
+				ETunnelFlag = false
+				return
+			}
+
+			UpJWT = data["up_JWT"].(string)
+
+			server_pubKeyECDH, err := utils.JWKFromMap(data)
+			if err != nil {
+				fmt.Println(err.Error())
+				ETunnelFlag = false
+				return
+			}
+
+			userSymmetricKey, err = privJWK_ecdh.GetECDHSharedSecret(server_pubKeyECDH)
+			if err != nil {
+				fmt.Println(err.Error())
+				ETunnelFlag = false
+				return
+			}
+
+			fmt.Println("up_jwt: ", UpJWT)
+
+			// TODO: Send an encrypted ping / confirmation to the server using the shared secret
+			// just like the 1. Syn 2. Syn/Ack 3. Ack flow in a TCP handshake
+			ETunnelFlag = true
+			fmt.Println("Encrypted tunnel successfully established.")
 			return
-		}
+		}()
 
-		UpJWT = data["up_JWT"].(string)
-
-		server_pubKeyECDH, err := utils.JWKFromMap(data)
-		if err != nil {
-			fmt.Println(err.Error())
-			ETunnelFlag = false
-			return
-		}
-
-		userSymmetricKey, err = privJWK_ecdh.GetECDHSharedSecret(server_pubKeyECDH)
-		if err != nil {
-			fmt.Println(err.Error())
-			ETunnelFlag = false
-			return
-		}
-
-		fmt.Println("up_jwt: ", UpJWT)
-
-		// TODO: Send an encrypted ping / confirmation to the server using the shared secret
-		// just like the 1. Syn 2. Syn/Ack 3. Ack flow in a TCP handshake
-		ETunnelFlag = true
-		fmt.Println("Encrypted tunnel successfully established.")
-		return
-	}()
-
-	return nil
+		return nil
+	}))
 }
 
 func fetch(this js.Value, args []js.Value) interface{} {

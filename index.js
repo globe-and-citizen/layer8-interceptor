@@ -116,7 +116,6 @@ export default {
     return new Promise(async (resolve, reject) => {
       if (l8Ready) {
         if (config == null) {
-          console.log("me runin...")
           resolve(await layer8.fetch(url));
         } else {
           resolve(await layer8.fetch(url, config));
