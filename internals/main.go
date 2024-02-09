@@ -25,8 +25,14 @@ type ClientImpl interface {
 
 // NewClient creates a new client with the given proxy server url
 func NewClient(scheme, host, port string) ClientImpl {
+	var ProxyURL string
+	if port != "" {
+		ProxyURL = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+	} else {
+		ProxyURL = fmt.Sprintf("%s://%s", scheme, host)
+	}
 	return &Client{
-		proxyURL: fmt.Sprintf("%s://%s%s", scheme, host, port),
+		proxyURL: ProxyURL,
 	}
 }
 
@@ -43,6 +49,8 @@ func (c *Client) Do(url string, req *utils.Request, sharedSecret *utils.JWK, isS
 	return res
 }
 
+// TODO: Daniel, can client.transfer and client.do be combined?
+// If not, why keep them separate?
 // transfer sends the request to the remote server through the layer8 proxy server
 func (c *Client) transfer(sharedSecret *utils.JWK, req *utils.Request, url string, isStatic bool, UpJWT, UUID string) (*utils.Response, error) {
 	// send the request
@@ -122,11 +130,12 @@ func (c *Client) do(
 		resByte, _ := res.ToJSON()
 		return resByte
 	}
-	// add headers
+	// Add headers to the interceptor request.
+	// Note that at this point, the user's headers are bundled into the encrypted body of the interceptor's request
 	r.Header.Add("X-Forwarded-Host", parsedURL.Host)
 	r.Header.Add("X-Forwarded-Proto", parsedURL.Scheme)
 	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("up_JWT", UpJWT) // RAVI -- Notice here the addition of the up_JWT and the x-client-uuid...
+	r.Header.Add("up_JWT", UpJWT)
 	r.Header.Add("x-client-uuid", UUID)
 	if isStatic {
 		r.Header.Add("X-Static", "true")
@@ -148,9 +157,7 @@ func (c *Client) do(
 
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(res.Body)
-
 	bufByte := buf.Bytes()
-
 	mapB := make(map[string]interface{})
 	json.Unmarshal(bufByte, &mapB)
 
@@ -158,7 +165,7 @@ func (c *Client) do(
 	if !ok {
 		res := &utils.Response{
 			Status:     500,
-			StatusText: "mapB[\"data\"].(string) not 'ok'",
+			StatusText: "Proxy's response to interceptor's request failed to unmarshall: mapB[\"data\"].(string) not 'ok'",
 			Headers:    make(map[string]string),
 		}
 		resByte, _ := res.ToJSON()

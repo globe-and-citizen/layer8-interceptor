@@ -33,9 +33,12 @@ var (
 	userSymmetricKey   *utils.JWK
 	UpJWT              string
 	UUID               string
+	L8Client           internals.ClientImpl
 )
 
-// var L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port) // Ravi TODO this should probably be revisited
+/*
+	//var L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port) // Ravi TODO this should probably be revisited
+*/
 
 func main() {
 	// Create channel to keep the Go thread alive
@@ -226,6 +229,8 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			// TODO: Send an encrypted ping / confirmation to the server using the shared secret
 			// just like the 1. Syn 2. Syn/Ack 3. Ack flow in a TCP handshake
 			ETunnelFlag = true
+			L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port)
+			//fmt.Println("[interceptor] ", L8Client)
 			fmt.Println("[Interceptor] Encrypted tunnel successfully established.")
 			resolve.Invoke(true)
 			return
@@ -272,38 +277,28 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		}
 
 		// Set headers to an empty object if it is 'undefined' or 'null'
-		headers := options.Get("headers")
-		if headers.String() == "<undefined>" || headers.String() == "null" {
-			headers = js.ValueOf(map[string]interface{}{})
+		userAddedHeaders := options.Get("headers")
+		if userAddedHeaders.String() == "<undefined>" || userAddedHeaders.String() == "null" {
+			userAddedHeaders = js.ValueOf(map[string]interface{}{})
 		}
 
-		// set the UpJWT to the headers
-		fmt.Println("Setting up_jwt to the headers: ", UpJWT) // Ravi TODO -- does adding these two headers additions leak info?
-		headers.Set("up-jwt", UpJWT)
-
-		// set the UUID to the headers
-		fmt.Println("Setting x-client-uuid to the headers: ", UUID)
-		headers.Set("x-client-uuid", UUID)
-
-		headersMap := make(map[string]string)
-		js.Global().Get("Object").Call("entries", headers).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-			headersMap[args[0].Index(0).String()] = args[0].Index(1).String()
+		userHeaderMap := make(map[string]string)
+		js.Global().Get("Object").Call("entries", userAddedHeaders).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+			userHeaderMap[args[0].Index(0).String()] = args[0].Index(1).String()
 			return nil
 		}))
 
 		// set the content-type to application/json if it's undefined
-		if _, ok := headersMap["Content-Type"]; !ok {
-			headersMap["Content-Type"] = "application/json"
+		// TODO: If it's a GET request, is this still necessary / appropriate?
+		// In the switch statement below, all GET requests are given a body of '{}'. On arrival in the sever, this should actually be `undefined`.
+		if _, ok := userHeaderMap["Content-Type"]; !ok {
+			userHeaderMap["Content-Type"] = "application/json"
 		}
 
 		go func() {
-			// forward request to the layer8 proxy server
-			// res := L8Client.
-			// 	Do(url, utils.NewRequest(method, headersMap, []byte(body)), userSymmetricKey)
-			// res := internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(url, utils.NewRequest(method, headersMap, []byte(body)), userSymmetricKey)
 			var res *utils.Response
 
-			switch strings.ToLower(headersMap["Content-Type"]) {
+			switch strings.ToLower(userHeaderMap["Content-Type"]) {
 			case "application/json": // Note this is the default that GET requests travel through
 				// Converting the body to Golag or setting it as null/nil
 				bodyMap := map[string]interface{}{}
@@ -326,13 +321,12 @@ func fetch(this js.Value, args []js.Value) interface{} {
 				}
 
 				// forward request to the layer8 proxy server
-				//res = L8Client.Do( // RAVI TODO: Get a single client working again.
-				res = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(
-					url, utils.NewRequest(method, headersMap, bodyByte),
+				res = L8Client.Do(
+					url, utils.NewRequest(method, userHeaderMap, bodyByte),
 					userSymmetricKey, false, UpJWT, UUID)
 
 			case "multipart/form-data":
-				headersMap["Content-Type"] = "application/layer8.buffer+json"
+				userHeaderMap["Content-Type"] = "application/layer8.buffer+json"
 
 				body := options.Get("body")
 				if body.String() == "<undefined>" || body.String() == "null" {
@@ -430,9 +424,8 @@ func fetch(this js.Value, args []js.Value) interface{} {
 				}
 
 				// forward request to the layer8 proxy server
-				//res = L8Client.Do( // RAVI TODO: Get a single client working again.
-				res = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(
-					url, utils.NewRequest(method, headersMap, bodyByte),
+				res = L8Client.Do( // RAVI TODO: Get a single client working again.
+					url, utils.NewRequest(method, userHeaderMap, bodyByte),
 					userSymmetricKey, false, UpJWT, UUID)
 			default:
 				res = &utils.Response{
@@ -441,8 +434,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 				}
 			}
 
-			/// RAVI breakpoint ///
-			if res.Status >= 100 || res.Status < 300 { // Handle Success & Default Rejection
+			if res.Status >= 100 && res.Status < 300 { // Handle Success & Default Rejection
 				resHeaders := js.Global().Get("Headers").New()
 
 				for k, v := range res.Headers {
@@ -459,7 +451,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			}
 
 			reject.Invoke(js.Global().Get("Error").New(res.StatusText))
-			fmt.Println("status:", res.Status, res.StatusText)
+			fmt.Printf("[interceptor] fetch status %s. Error txt: %s", res.Status, res.StatusText)
 			return
 		}()
 		return nil
@@ -476,8 +468,7 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		resolve := args[0]
 
 		go func() {
-			//res = L8Client.Do( // RAVI TODO: Get a single client working again.
-			resp := internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port).Do(
+			resp := L8Client.Do(
 				url, utils.NewRequest("GET", make(map[string]string), nil),
 				userSymmetricKey, true, UpJWT, UUID)
 
