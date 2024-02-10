@@ -55,6 +55,12 @@ function triggerCallbacks() {
           reject(`Call to Layer8.${name} failed: ${error}`);
         }
         break;
+      case "checkEncryptedTunnel":
+        try {
+          resolve(await layer8.checkEncryptedTunnel())
+        } catch (error){
+          reject(`Call to Layer8.${name} failed: ${error}`);
+        }
       case "fetch":
         try {
           resolve(await layer8.fetch(...args));
@@ -111,6 +117,15 @@ export default {
         illGetBackToYou("initEncryptedTunnel", resolve, reject, [...arg]);
       }
     });
+  },
+  checkEncryptedTunnel: () => {
+    return new Promise(async (resolve, reject) => {
+      if (l8Ready) {
+        resolve(await layer8.checkEncryptedTunnel());
+      } else {
+        illGetBackToYou("checkEncryptedTunnel", resolve, reject, null);
+      }
+    })
   },
   fetch: (url, config = null) => {
     return new Promise(async (resolve, reject) => {

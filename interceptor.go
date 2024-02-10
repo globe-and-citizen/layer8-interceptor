@@ -22,18 +22,18 @@ const INTERCEPTOR_VERSION = "0.0.14"
 
 // Declare global variables
 var (
-	Layer8Scheme       string
-	Layer8Host         string
-	Layer8Port         string
-	Layer8LightsailURL string
-	Counter            int
-	ETunnelFlag        bool
-	privJWK_ecdh       *utils.JWK
-	pubJWK_ecdh        *utils.JWK
-	userSymmetricKey   *utils.JWK
-	UpJWT              string
-	UUID               string
-	L8Client           internals.ClientImpl
+	Layer8Scheme        string
+	Layer8Host          string
+	Layer8Port          string
+	Layer8LightsailURL  string
+	Counter             int
+	EncryptedTunnelFlag bool
+	privJWK_ecdh        *utils.JWK
+	pubJWK_ecdh         *utils.JWK
+	userSymmetricKey    *utils.JWK
+	UpJWT               string
+	UUID                string
+	L8Client            internals.ClientImpl
 )
 
 /*
@@ -49,15 +49,17 @@ func main() {
 	Layer8Host = ""
 	Layer8Port = ""
 
-	ETunnelFlag = false
+	EncryptedTunnelFlag = false
 
 	// Expose layer8 functionality to the front end Javascript
 	js.Global().Set("layer8", js.ValueOf(map[string]interface{}{
-		"testWASM":            js.FuncOf(testWASM),
-		"persistenceCheck":    js.FuncOf(persistenceCheck),
-		"initEncryptedTunnel": js.FuncOf(initializeECDHTunnel),
-		"fetch":               js.FuncOf(fetch),
-		"static":              js.FuncOf(getStatic),
+		"testWASM":             js.FuncOf(testWASM),
+		"persistenceCheck":     js.FuncOf(persistenceCheck),
+		"initEncryptedTunnel":  js.FuncOf(initializeECDHTunnel),
+		"checkEncryptedTunnel": js.FuncOf(checkEncryptedTunnel),
+		"fetch":                js.FuncOf(fetch),
+		"static":               js.FuncOf(getStatic),
+		// TODO: add a function here that returns the state of the tunnel
 	}))
 
 	// Developer Warnings:
@@ -148,7 +150,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			privJWK_ecdh, pubJWK_ecdh, err = utils.GenerateKeyPair(utils.ECDH)
 			if err != nil {
 				fmt.Println("[Interceptor]", err.Error())
-				ETunnelFlag = false
+				EncryptedTunnelFlag = false
 				reject.Invoke(js.Global().Get("Error").New("Unable to generate client key pair"))
 				return
 			}
@@ -156,7 +158,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			b64PubJWK, err := pubJWK_ecdh.ExportAsBase64()
 			if err != nil {
 				fmt.Println("[Interceptor]", err.Error())
-				ETunnelFlag = false
+				EncryptedTunnelFlag = false
 				reject.Invoke(js.Global().Get("Error").New("Failed to Export publicJWK_ecdh"))
 				return
 			}
@@ -173,7 +175,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			req, err := http.NewRequest("POST", ProxyURL, bytes.NewBuffer([]byte(b64PubJWK)))
 			if err != nil {
 				fmt.Println(err.Error())
-				ETunnelFlag = false
+				EncryptedTunnelFlag = false
 				reject.Invoke(js.Global().Get("Error").New("Creation of initialization POST request failed. "))
 				return
 			}
@@ -187,13 +189,13 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			if err != nil {
 				fmt.Println(err.Error())
 				reject.Invoke(js.Global().Get("Error").New("Initialization POST request to Proxy failed. "))
-				ETunnelFlag = false
+				EncryptedTunnelFlag = false
 				return
 			}
 
 			if resp.StatusCode == 401 {
 				reject.Invoke(js.Global().Get("Error").New("401 response from proxy, user is not authorized. "))
-				ETunnelFlag = false
+				EncryptedTunnelFlag = false
 				return
 			}
 
@@ -204,7 +206,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			err = json.Unmarshal(Respbody, &data)
 			if err != nil {
 				reject.Invoke(js.Global().Get("Error").New("The data received from the proxy could not be unmarshalled: ", err.Error()))
-				ETunnelFlag = false
+				EncryptedTunnelFlag = false
 				return
 			}
 
@@ -213,14 +215,14 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			server_pubKeyECDH, err := utils.JWKFromMap(data)
 			if err != nil {
 				reject.Invoke(js.Global().Get("Error").New(err.Error()))
-				ETunnelFlag = false
+				EncryptedTunnelFlag = false
 				return
 			}
 
 			userSymmetricKey, err = privJWK_ecdh.GetECDHSharedSecret(server_pubKeyECDH)
 			if err != nil {
 				reject.Invoke(js.Global().Get("Error").New(err.Error()))
-				ETunnelFlag = false
+				EncryptedTunnelFlag = false
 				return
 			}
 
@@ -228,7 +230,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 
 			// TODO: Send an encrypted ping / confirmation to the server using the shared secret
 			// just like the 1. Syn 2. Syn/Ack 3. Ack flow in a TCP handshake
-			ETunnelFlag = true
+			EncryptedTunnelFlag = true
 			L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port)
 			//fmt.Println("[interceptor] ", L8Client)
 			fmt.Println("[Interceptor] Encrypted tunnel successfully established.")
@@ -240,12 +242,25 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 	}))
 }
 
+func checkEncryptedTunnel(this js.Value, args []js.Value) interface{} {
+	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, resolve_reject []js.Value) interface{} {
+		resolve := resolve_reject[0]
+		//reject := resolve_reject[1]
+		if EncryptedTunnelFlag {
+			resolve.Invoke(true)
+		} else {
+			resolve.Invoke(false)
+		}
+		return nil
+	}))
+}
+
 func fetch(this js.Value, args []js.Value) interface{} {
 	var promise_logic = func(this js.Value, resolve_reject []js.Value) interface{} {
 		resolve := resolve_reject[0]
 		reject := resolve_reject[1]
 
-		if !ETunnelFlag {
+		if !EncryptedTunnelFlag {
 			reject.Invoke(js.Global().Get("Error").New("The Encrypted tunnel is closed. Reload page."))
 			return nil
 		}
