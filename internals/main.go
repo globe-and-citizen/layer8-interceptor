@@ -135,7 +135,7 @@ func (c *Client) do(
 	r.Header.Add("X-Forwarded-Host", parsedURL.Host)
 	r.Header.Add("X-Forwarded-Proto", parsedURL.Scheme)
 	r.Header.Add("Content-Type", "application/json")
-	r.Header.Add("up_JWT", UpJWT)
+	r.Header.Add("up-JWT", UpJWT)
 	r.Header.Add("x-client-uuid", UUID)
 	if isStatic {
 		r.Header.Add("X-Static", "true")
