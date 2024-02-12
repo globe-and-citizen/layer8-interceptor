@@ -18,9 +18,9 @@ const decode = (encoded) => {
   return bytes.buffer;
 };
 
-function illGetBackToYou(_name, _resolve, _reject, _args) {
+function illGetBackToYou(_func, _resolve, _reject, _args) {
   callbackObjectArray.push({
-    name: _name,
+    func: _func,
     resolve: _resolve,
     reject: _reject,
     args: _args,
@@ -29,43 +29,16 @@ function illGetBackToYou(_name, _resolve, _reject, _args) {
 
 function triggerCallbacks() {
   callbackObjectArray.forEach(async (callbackObject, _idx, _arr) => {
-    const name = callbackObject.name;
+    const name = callbackObject.func.name;
+    const func = callbackObject.func;
     const resolve = callbackObject.resolve;
     const reject = callbackObject.reject;
-    const args = callbackObject.args;
+    const args = callbackObject.args || [];
 
-    switch (name) {
-      case "testWASM":
-        try {
-          resolve(await layer8.testWASM(...args));
-        } catch (error) {
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-        break;
-      case "persistenceCheck":
-        try {
-          resolve(await layer8.persistenceCheck());
-        } catch (error) {
-          initEncryptedTunnel;
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-        break;
-      case "initEncryptedTunnel":
-        try {
-          resolve(await layer8.initEncryptedTunnel(...args));
-        } catch (error) {
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-        break;
-      case "fetch":
-        try {
-          resolve(await layer8.fetch(...args));
-        } catch (error) {
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-        break;
-      default:
-      // code block
+    try {
+      resolve(await func(...args));
+    } catch (error) {
+      reject(`Call to Layer8.${name} failed: ${error}`);
     }
   });
 }
@@ -86,7 +59,7 @@ export default {
       if (l8Ready) {
         resolve(await layer8.testWASM(arg));
       } else {
-        illGetBackToYou("testWASM", resolve, reject, [arg]);
+        illGetBackToYou(layer8.testWASM, resolve, reject, [arg]);
       }
     });
   },
@@ -95,7 +68,7 @@ export default {
       if (l8Ready) {
         resolve(await layer8.persistenceCheck());
       } else {
-        illGetBackToYou("persistenceCheck", resolve, reject, null);
+        illGetBackToYou(layer8.persistenceCheck, resolve, reject, null);
       }
     });
   },
@@ -104,7 +77,7 @@ export default {
       if (l8Ready) {
         resolve(await layer8.initEncryptedTunnel(...arg));
       } else {
-        illGetBackToYou("initEncryptedTunnel", resolve, reject, [...arg]);
+        illGetBackToYou(layer8.initEncryptedTunnel, resolve, reject, [...arg]);
       }
     });
   },
@@ -118,9 +91,9 @@ export default {
         }
       } else {
         if (config == null) {
-          illGetBackToYou("fetch", resolve, reject, [url]);
+          illGetBackToYou(layer8.fetch, resolve, reject, [url]);
         } else {
-          illGetBackToYou("fetch", resolve, reject, [url, config]);
+          illGetBackToYou(layer8.fetch, resolve, reject, [url, config]);
         }
       }
     });
