@@ -1,6 +1,4 @@
-// const _ = require("./dist/wasm_exec.js");
-// const wasmBin = require("./dist/interceptor.json");
-
+// IMPORTS
 import wasmBin from "./dist/interceptor.json";
 import "./dist/wasm_exec.js";
 
@@ -57,6 +55,12 @@ function triggerCallbacks() {
           reject(`Call to Layer8.${name} failed: ${error}`);
         }
         break;
+      case "checkEncryptedTunnel":
+        try {
+          resolve(await layer8.checkEncryptedTunnel())
+        } catch (error){
+          reject(`Call to Layer8.${name} failed: ${error}`);
+        }
       case "fetch":
         try {
           resolve(await layer8.fetch(...args));
@@ -64,6 +68,12 @@ function triggerCallbacks() {
           reject(`Call to Layer8.${name} failed: ${error}`);
         }
         break;
+      case "static":
+        try{
+          resolve(await layer8.static(...args));
+        } catch(error){
+          reject(`Call to Layer8.${name} failed: ${erorr}`);
+        }
       default:
       // code block
     }
@@ -108,6 +118,15 @@ export default {
       }
     });
   },
+  checkEncryptedTunnel: () => {
+    return new Promise(async (resolve, reject) => {
+      if (l8Ready) {
+        resolve(await layer8.checkEncryptedTunnel());
+      } else {
+        illGetBackToYou("checkEncryptedTunnel", resolve, reject, null);
+      }
+    })
+  },
   fetch: (url, config = null) => {
     return new Promise(async (resolve, reject) => {
       if (l8Ready) {
@@ -125,4 +144,13 @@ export default {
       }
     });
   },
+  static: (url) => {
+    return new Promise(async (resolve, reject) => {
+      if (l8Ready){
+        resolve(await layer8.static(url))
+      } else {
+        illGetBackToYou("static", resolve, reject, [url])
+      }
+    })
+  }
 };
