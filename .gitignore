@@ -156,4 +156,4 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-.wasm
+/bin/interceptor.wasm
