@@ -30,53 +30,14 @@ function triggerCallbacks() {
     const name = callbackObject.name;
     const resolve = callbackObject.resolve;
     const reject = callbackObject.reject;
-    const args = callbackObject.args;
-
-    switch (name) {
-      case "testWASM":
-        try {
-          resolve(await layer8.testWASM(...args));
-        } catch (error) {
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-        break;
-      case "persistenceCheck":
-        try {
-          resolve(await layer8.persistenceCheck());
-        } catch (error) {
-          initEncryptedTunnel;
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-        break;
-      case "initEncryptedTunnel":
-        try {
-          resolve(await layer8.initEncryptedTunnel(...args));
-        } catch (error) {
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-        break;
-      case "checkEncryptedTunnel":
-        try {
-          resolve(await layer8.checkEncryptedTunnel())
-        } catch (error){
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-      case "fetch":
-        try {
-          resolve(await layer8.fetch(...args));
-        } catch (error) {
-          reject(`Call to Layer8.${name} failed: ${error}`);
-        }
-        break;
-      case "static":
-        try{
-          resolve(await layer8.static(...args));
-        } catch(error){
-          reject(`Call to Layer8.${name} failed: ${erorr}`);
-        }
-      default:
-      // code block
+    const args = callbackObject.args || [];
+    
+    try {
+      resolve(await layer8[name](...args));
+    } catch (error) {
+      reject(`Call to Layer8.${name} failed: ${error}`);
     }
+
   });
 }
 
