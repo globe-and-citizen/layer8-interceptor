@@ -1,4 +1,4 @@
-# layer8-interceptor
+# layer8_interceptor
 WASM Implementation of the Layer8 Interceptor complete with DevOps pipeline to push to NPM.
 
 ## Usage
