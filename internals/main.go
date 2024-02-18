@@ -53,6 +53,12 @@ func (c *Client) Do(url string, req *utils.Request, sharedSecret *utils.JWK, isS
 // If not, why keep them separate?
 // transfer sends the request to the remote server through the layer8 proxy server
 func (c *Client) transfer(sharedSecret *utils.JWK, req *utils.Request, url string, isStatic bool, UpJWT, UUID string) (*utils.Response, error) {
+	fmt.Println("[Interceptor / transfer] sharedSecret", sharedSecret)
+	fmt.Println("[Interceptor / transfer] url", url)
+	fmt.Println("[Interceptor / transfer] req", req)
+	fmt.Println("[Interceptor / transfer] isStatic", isStatic)
+	fmt.Println("[Interceptor / transfer] UpJWT", UpJWT)
+	fmt.Println("[Interceptor / transfer] UUID", UUID)
 	// send the request
 	res := c.do(req, sharedSecret, url, isStatic, UpJWT, UUID)
 	// decode response body
@@ -94,6 +100,7 @@ func (c *Client) do(
 		return resByte
 	}
 
+	fmt.Println("[Interceptor] len(data) after sharedSecret.SymmetricEncrypt(data): ", len(data))
 	data, err = json.Marshal(map[string]interface{}{
 		"data": base64.URLEncoding.EncodeToString(data),
 	})
@@ -118,6 +125,8 @@ func (c *Client) do(
 		resByte, _ := res.ToJSON()
 		return resByte
 	}
+
+	fmt.Println("[Interceptor] http POST will go to (c.proxyURL+parsedURL.Path): ", c.proxyURL+parsedURL.Path)
 	// create request
 	client := &http.Client{}
 	r, err := http.NewRequest("POST", c.proxyURL+parsedURL.Path, bytes.NewBuffer(data))
@@ -158,6 +167,7 @@ func (c *Client) do(
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(res.Body)
 	bufByte := buf.Bytes()
+	fmt.Println("[Interceptor] len(bufByte) on return from sp_backend via proxy: ", len(bufByte))
 	mapB := make(map[string]interface{})
 	json.Unmarshal(bufByte, &mapB)
 
@@ -194,6 +204,7 @@ func (c *Client) do(
 		return resByte
 	}
 
+	fmt.Println("[Interceptor] len(bufByte) after sharedSecret.SymmetricDecrypt(decoded): ", len(bufByte))
 	// At this point the proxy's headers have been stripped and you have the SP's response as bufByte
 	return bufByte
 }

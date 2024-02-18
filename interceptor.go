@@ -129,8 +129,14 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 		default:
 			ErrorDestructuringConfigObject = true
 		}
+
 		return nil
 	}))
+
+	fmt.Println("[Interceptor] ServiceProviderURL: ", ServiceProviderURL)
+	fmt.Println("[Interceptor] Layer8Scheme: ", Layer8Scheme)
+	fmt.Println("[Interceptor] Layer8Host: ", Layer8Host)
+	fmt.Println("[Interceptor] Layer8Port: ", Layer8Port)
 
 	if ErrorDestructuringConfigObject {
 		return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
@@ -169,8 +175,8 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			} else {
 				ProxyURL = fmt.Sprintf("%s://%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, ServiceProviderURL)
 			}
+			fmt.Println("[Interceptor] ProxyURL set to: ", ProxyURL)
 
-			// fmt.Println("[Interceptor]", ProxyURL)
 			client := &http.Client{}
 			req, err := http.NewRequest("POST", ProxyURL, bytes.NewBuffer([]byte(b64PubJWK)))
 			if err != nil {
@@ -211,6 +217,12 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			}
 
 			UpJWT = data["up-JWT"].(string)
+
+			if data["up-JWT"] == nil {
+				reject.Invoke(js.Global().Get("Error").New("data['up-JWT'].(string) == nil during ECDH init"))
+				EncryptedTunnelFlag = false
+
+			}
 
 			server_pubKeyECDH, err := utils.JWKFromMap(data)
 			if err != nil {
@@ -256,6 +268,7 @@ func checkEncryptedTunnel(this js.Value, args []js.Value) interface{} {
 }
 
 func fetch(this js.Value, args []js.Value) interface{} {
+	fmt.Println("\n\n[Interceptor] New .fetch request initiated")
 	var promise_logic = func(this js.Value, resolve_reject []js.Value) interface{} {
 		resolve := resolve_reject[0]
 		reject := resolve_reject[1]
@@ -477,6 +490,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 }
 
 func getStatic(this js.Value, args []js.Value) interface{} {
+	fmt.Println("\n\n[Interceptor] New .getStatic request initiated")
 	url := args[0].String()
 
 	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
