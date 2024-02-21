@@ -307,7 +307,11 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		// TODO: If it's a GET request, is this still necessary / appropriate?
 		// In the switch statement below, all GET requests are given a body of '{}'. On arrival in the sever, this should actually be `undefined`.
 		if _, ok := userHeaderMap["Content-Type"]; !ok {
-			userHeaderMap["Content-Type"] = "application/json"
+			if options.Get("body").Call("constructor").Get("name").String() == "FormData" {
+				userHeaderMap["Content-Type"] = "multipart/form-data"
+			} else {
+				userHeaderMap["Content-Type"] = "application/json"
+			}
 		}
 
 		go func() {
