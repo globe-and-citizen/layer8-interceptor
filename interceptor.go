@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"globe-and-citizen/layer8-interceptor/internals"
+	"os"
 	"time"
 
 	"net/http"
+	"net/url"
 	"strings"
 	"syscall/js"
 
@@ -22,9 +24,6 @@ const INTERCEPTOR_VERSION = "0.0.14"
 
 // Declare global variables
 var (
-	Layer8Scheme        string
-	Layer8Host          string
-	Layer8Port          string
 	Layer8LightsailURL  string
 	Counter             int
 	EncryptedTunnelFlag bool
@@ -33,7 +32,7 @@ var (
 	userSymmetricKey    *utils.JWK
 	UpJWT               string
 	UUID                string
-	L8Client            internals.ClientImpl
+	L8Clients           map[string]internals.ClientImpl = make(map[string]internals.ClientImpl)
 )
 
 /*
@@ -43,11 +42,6 @@ var (
 func main() {
 	// Create channel to keep the Go thread alive
 	c := make(chan struct{})
-
-	// Initialize global variables
-	Layer8Scheme = ""
-	Layer8Host = ""
-	Layer8Port = ""
 
 	EncryptedTunnelFlag = false
 
@@ -105,27 +99,32 @@ func persistenceCheck(this js.Value, args []js.Value) interface{} {
 
 func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 	// Convert JS values into useable Golang variables
-	ServiceProviderURL := ""
-	Layer8Scheme := ""
-	Layer8Host := ""
-	Layer8Port := ""
+	var (
+		providers []string
+		proxy     string = "https://layer8devproxy.net" // set LAYER8_PROXY in the environment to override
+		mode      string = "prod"
+	)
+	if len(args) > 1 {
+		mode = args[1].String()
+	}
+
 	ErrorDestructuringConfigObject := false
 
 	js.Global().Get("Object").Call("entries", args[0]).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		// fmt.Println("Key: ", args[0].Index(0).String())   // key
 		key := args[0].Index(0).String()
-		// fmt.Println("Value: ", args[0].Index(1).String()) // value
-		value := args[0].Index(1).String()
 
 		switch key {
-		case "ServiceProviderURL":
-			ServiceProviderURL = value
-		case "Layer8Scheme":
-			Layer8Scheme = value
-		case "Layer8Host":
-			Layer8Host = value
-		case "Layer8Port":
-			Layer8Port = value
+		case "providers":
+			providers = make([]string, args[0].Index(1).Length())
+			js.CopyBytesToGo(providers, args[0].Index(1))
+		case "proxy":
+			if mode == "dev" {
+				proxy = args[0].Index(1).String()
+			} else {
+				if os.Getenv("LAYER8_PROXY") != "" {
+					proxy = os.Getenv("LAYER8_PROXY")
+				}
+			}
 		default:
 			ErrorDestructuringConfigObject = true
 		}
@@ -145,7 +144,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 		resolve := args[0]
 		reject := args[1]
 
-		go func() {
+		initTunnel := func(provider string) {
 			var err error
 			privJWK_ecdh, pubJWK_ecdh, err = utils.GenerateKeyPair(utils.ECDH)
 			if err != nil {
@@ -163,16 +162,10 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 				return
 			}
 
-			var ProxyURL string
-			if Layer8Port != "" {
-				ProxyURL = fmt.Sprintf("%s://%s:%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, Layer8Port, ServiceProviderURL)
-			} else {
-				ProxyURL = fmt.Sprintf("%s://%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, ServiceProviderURL)
-			}
+			proxy = fmt.Sprintf("%s/init-tunnel?backend=%s", proxy, provider)
 
-			// fmt.Println("[Interceptor]", ProxyURL)
 			client := &http.Client{}
-			req, err := http.NewRequest("POST", ProxyURL, bytes.NewBuffer([]byte(b64PubJWK)))
+			req, err := http.NewRequest("POST", proxy, bytes.NewBuffer([]byte(b64PubJWK)))
 			if err != nil {
 				fmt.Println(err.Error())
 				EncryptedTunnelFlag = false
@@ -231,12 +224,29 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			// TODO: Send an encrypted ping / confirmation to the server using the shared secret
 			// just like the 1. Syn 2. Syn/Ack 3. Ack flow in a TCP handshake
 			EncryptedTunnelFlag = true
-			L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port)
-			//fmt.Println("[interceptor] ", L8Client)
-			fmt.Println("[Interceptor] Encrypted tunnel successfully established.")
+			proxyURL, err := url.Parse(proxy)
+			if err != nil {
+				reject.Invoke(js.Global().Get("Error").New(err.Error()))
+				EncryptedTunnelFlag = false
+				return
+			}
+			port := proxyURL.Port()
+			if port == "" {
+				if proxyURL.Scheme == "https" {
+					port = "443"
+				} else {
+					port = "80"
+				}
+			}
+			L8Clients[provider] = internals.NewClient(proxyURL.Scheme, proxyURL.Hostname(), port)
+			fmt.Sprintln("[%s] Encrypted tunnel successfully established.", provider)
 			resolve.Invoke(true)
 			return
-		}()
+		}
+
+		for _, provider := range providers {
+			go initTunnel(provider)
+		}
 
 		return nil
 	}))
@@ -270,8 +280,8 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			return nil
 		}
 
-		url := args[0].String()
-		if len(url) <= 0 {
+		spURL := args[0].String()
+		if len(spURL) <= 0 {
 			reject.Invoke(js.Global().Get("Error").New("Invalid URL provided to fetch call."))
 			return nil
 		}
@@ -314,6 +324,13 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			}
 		}
 
+		pURL, err := url.Parse(spURL)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+		client := L8Clients[pURL.Scheme+"://"+pURL.Host]
+
 		go func() {
 			var res *utils.Response
 
@@ -340,8 +357,8 @@ func fetch(this js.Value, args []js.Value) interface{} {
 				}
 
 				// forward request to the layer8 proxy server
-				res = L8Client.Do(
-					url, utils.NewRequest(method, userHeaderMap, bodyByte),
+				res = client.Do(
+					spURL, utils.NewRequest(method, userHeaderMap, bodyByte),
 					userSymmetricKey, false, UpJWT, UUID)
 
 			case "multipart/form-data":
@@ -443,8 +460,8 @@ func fetch(this js.Value, args []js.Value) interface{} {
 				}
 
 				// forward request to the layer8 proxy server
-				res = L8Client.Do( // RAVI TODO: Get a single client working again.
-					url, utils.NewRequest(method, userHeaderMap, bodyByte),
+				res = client.Do( // RAVI TODO: Get a single client working again.
+					spURL, utils.NewRequest(method, userHeaderMap, bodyByte),
 					userSymmetricKey, false, UpJWT, UUID)
 			default:
 				res = &utils.Response{
@@ -481,14 +498,22 @@ func fetch(this js.Value, args []js.Value) interface{} {
 }
 
 func getStatic(this js.Value, args []js.Value) interface{} {
-	url := args[0].String()
+	spURL := args[0].String()
 
 	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		resolve := args[0]
+		reject := args[1]
+
+		pURL, err := url.Parse(spURL)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+		client := L8Clients[pURL.Scheme+"://"+pURL.Host]
 
 		go func() {
-			resp := L8Client.Do(
-				url, utils.NewRequest("GET", make(map[string]string), nil),
+			resp := client.Do(
+				spURL, utils.NewRequest("GET", make(map[string]string), nil),
 				userSymmetricKey, true, UpJWT, UUID)
 
 			// convert response body to js arraybuffer
