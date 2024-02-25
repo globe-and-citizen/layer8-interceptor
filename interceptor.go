@@ -97,7 +97,7 @@ func persistenceCheck(this js.Value, args []js.Value) interface{} {
 	return promise
 }
 
-func parseURLForKey(u string) (string, error) {
+func getHost(u string) (string, error) {
 	p, err := url.Parse(u)
 	if err != nil {
 		return "", err
@@ -159,8 +159,9 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 		reject := args[1]
 
 		initTunnel := func(provider string) {
-			// parse the provider URL to maintain a pattern
-			provider, err := parseURLForKey(provider)
+			// parse the provider URL to maintain a pattern of scheme://host:port
+			// in the L8Clients map
+			provider, err := getHost(provider)
 			if err != nil {
 				fmt.Println("[Interceptor]", err.Error())
 				EncryptedTunnelFlag = false
@@ -347,7 +348,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			}
 		}
 
-		host, err := parseURLForKey(spURL)
+		host, err := getHost(spURL)
 		if err != nil {
 			reject.Invoke(js.Global().Get("Error").New(err.Error()))
 			return nil
