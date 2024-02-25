@@ -262,7 +262,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 				}
 			}
 			L8Clients[provider] = internals.NewClient(proxyURL.Scheme, proxyURL.Hostname(), port)
-			fmt.Sprintln("[%s] Encrypted tunnel successfully established.", provider)
+			fmt.Printf("[%s] Encrypted tunnel successfully established.\n", provider)
 			resolve.Invoke(true)
 			return
 		}
