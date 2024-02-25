@@ -466,7 +466,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			}
 
 			reject.Invoke(js.Global().Get("Error").New(res.StatusText))
-			fmt.Printf("[interceptor] fetch status %s. Error txt: %s", res.Status, res.StatusText)
+			fmt.Printf("[interceptor] fetch status %d. Error txt: %s", res.Status, res.StatusText)
 			return
 		}()
 		return nil
