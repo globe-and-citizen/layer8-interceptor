@@ -35,10 +35,6 @@ var (
 	L8Clients           map[string]internals.ClientImpl = make(map[string]internals.ClientImpl)
 )
 
-/*
-	//var L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port) // Ravi TODO this should probably be revisited
-*/
-
 func main() {
 	// Create channel to keep the Go thread alive
 	c := make(chan struct{})
@@ -133,7 +129,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			}
 		case "proxy":
 			if mode == "dev" {
-				proxy = args[0].Index(1).String()
+				proxy = args[0].Index(1).String() //
 			} else {
 				if os.Getenv("LAYER8_PROXY") != "" {
 					proxy = os.Getenv("LAYER8_PROXY")
@@ -262,7 +258,8 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 				}
 			}
 			L8Clients[provider] = internals.NewClient(proxyURL.Scheme, proxyURL.Hostname(), port)
-			fmt.Sprintln("[%s] Encrypted tunnel successfully established.", provider)
+			msg := fmt.Sprintf("[%s] Encrypted tunnel successfully established.", provider)
+			fmt.Println(msg)
 			resolve.Invoke(true)
 			return
 		}
