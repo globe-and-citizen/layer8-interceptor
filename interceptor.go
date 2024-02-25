@@ -97,6 +97,18 @@ func persistenceCheck(this js.Value, args []js.Value) interface{} {
 	return promise
 }
 
+func parseURLForKey(u string) (string, error) {
+	p, err := url.Parse(u)
+	if err != nil {
+		return "", err
+	}
+	res := p.Scheme + "://" + p.Hostname()
+	if p.Port() != "" {
+		res = res + ":" + p.Port()
+	}
+	return res, nil
+}
+
 func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 	// Convert JS values into useable Golang variables
 	var (
@@ -116,7 +128,9 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 		switch key {
 		case "providers":
 			providers = make([]string, args[0].Index(1).Length())
-			js.CopyBytesToGo(providers, args[0].Index(1))
+			for i := 0; i < args[0].Index(1).Get("length").Int(); i++ {
+				providers[i] = args[0].Index(1).Index(i).String()
+			}
 		case "proxy":
 			if mode == "dev" {
 				proxy = args[0].Index(1).String()
@@ -145,7 +159,15 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 		reject := args[1]
 
 		initTunnel := func(provider string) {
-			var err error
+			// parse the provider URL to maintain a pattern
+			provider, err := parseURLForKey(provider)
+			if err != nil {
+				fmt.Println("[Interceptor]", err.Error())
+				EncryptedTunnelFlag = false
+				reject.Invoke(js.Global().Get("Error").New("Unable to parse the provider URL. "))
+				return
+			}
+
 			privJWK_ecdh, pubJWK_ecdh, err = utils.GenerateKeyPair(utils.ECDH)
 			if err != nil {
 				fmt.Println("[Interceptor]", err.Error())
@@ -289,7 +311,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		options := js.ValueOf(map[string]interface{}{
 			"method":  "GET", // Set HTTP "GET" request to be the default
 			"headers": js.ValueOf(map[string]interface{}{}),
-			"body":    "<undefined>",
+			"body":    js.ValueOf("<undefined>"),
 		})
 
 		if len(args) > 1 {
@@ -317,19 +339,20 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		// TODO: If it's a GET request, is this still necessary / appropriate?
 		// In the switch statement below, all GET requests are given a body of '{}'. On arrival in the sever, this should actually be `undefined`.
 		if _, ok := userHeaderMap["Content-Type"]; !ok {
-			if options.Get("body").Call("constructor").Get("name").String() == "FormData" {
+			body := options.Get("body")
+			if body.String() != "<undefined>" && body.Get("constructor").Get("name").String() == "FormData" {
 				userHeaderMap["Content-Type"] = "multipart/form-data"
 			} else {
 				userHeaderMap["Content-Type"] = "application/json"
 			}
 		}
 
-		pURL, err := url.Parse(spURL)
+		host, err := parseURLForKey(spURL)
 		if err != nil {
 			reject.Invoke(js.Global().Get("Error").New(err.Error()))
 			return nil
 		}
-		client := L8Clients[pURL.Scheme+"://"+pURL.Host]
+		client := L8Clients[host]
 
 		go func() {
 			var res *utils.Response
@@ -511,7 +534,31 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		}
 		client := L8Clients[pURL.Scheme+"://"+pURL.Host]
 
-		go func() {
+		// using indexDB to cache the static files
+		openDB := func() js.Value {
+			// open the indexedDB
+			db := js.Global().Get("indexedDB").Call("open", "__layer8_cache")
+			db.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+				reject.Invoke(js.Global().Get("Error").New(
+					"Please enable IndexedDB in your browser or update your browser to the latest version."))
+				return nil
+			}))
+			// create the object store
+			db.Set("onupgradeneeded", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+				db := args[0].Get("target").Get("result")
+				store := db.Call("createObjectStore", "static", js.ValueOf(map[string]interface{}{
+					"keyPath": "url",
+				}))
+				store.Call("createIndex", "url", "url", js.ValueOf(map[string]interface{}{
+					"unique": true,
+				}))
+				return nil
+			}))
+			return db
+		}
+
+		// fetch the static file from the server and store it in the cache
+		fetchStatic := func() {
 			resp := client.Do(
 				spURL, utils.NewRequest("GET", make(map[string]string), nil),
 				userSymmetricKey, true, UpJWT, UUID)
@@ -526,13 +573,54 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 				resHeaders.Call("append", js.ValueOf(k), js.ValueOf(v))
 			}
 
+			fileType := resHeaders.Call("get", js.ValueOf("content-type"))
+
+			// store the file in the cache
+			db := openDB()
+			db.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+				db := args[0].Get("target").Get("result")
+				tx := db.Call("transaction", "static", "readwrite")
+				store := tx.Call("objectStore", "static")
+				store.Call("put", js.ValueOf(map[string]interface{}{
+					"url":  spURL,
+					"body": jsBody,
+					"type": fileType,
+				}))
+				return nil
+			}))
+
+			// convert the response body to a blob and resolve the promise
 			blob := js.Global().Get("Blob").New([]interface{}{jsBody}, js.ValueOf(map[string]interface{}{
-				"type": resHeaders.Call("get", js.ValueOf("content-type")),
+				"type": fileType,
 			}))
 			objURL := js.Global().Get("URL").Call("createObjectURL", blob)
-
 			resolve.Invoke(objURL)
-		}()
+		}
+
+		// check if the file is in the cache
+		db := openDB()
+		db.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+			db := args[0].Get("target").Get("result")
+			tx := db.Call("transaction", "static", "readonly")
+			store := tx.Call("objectStore", "static")
+			index := store.Call("index", "url")
+			req := index.Call("get", spURL)
+			req.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+				if req.Get("result").IsUndefined() {
+					// if the file is not in the cache, fetch it from the server
+					go fetchStatic()
+				} else {
+					data := req.Get("result")
+					blob := js.Global().Get("Blob").New([]interface{}{js.ValueOf(data.Get("body"))}, js.ValueOf(map[string]interface{}{
+						"type": data.Get("type"),
+					}))
+					objURL := js.Global().Get("URL").Call("createObjectURL", blob)
+					resolve.Invoke(objURL)
+				}
+				return nil
+			}))
+			return nil
+		}))
 
 		return nil
 	}))
