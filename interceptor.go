@@ -20,7 +20,15 @@ import (
 )
 
 // Declare global constants
-const INTERCEPTOR_VERSION = "0.0.14"
+type IndexedDBName string
+
+const (
+	INTERCEPTOR_VERSION = "0.0.14"
+
+	// IndexedDB constants
+	INDEXEDDB_CACHE IndexedDBName = "_layer8cache"
+	INDEXEDDB_CACHE_TTL time.Duration = time.Hour * 24 * 2 // 2 days
+)
 
 // Declare global variables
 var (
@@ -33,7 +41,85 @@ var (
 	UpJWT               string
 	UUID                string
 	L8Clients           map[string]internals.ClientImpl = make(map[string]internals.ClientImpl)
+
+	// IndexedDBs is a map of the IndexedDBs that the interceptor uses
+	IndexedDBs 			= map[IndexedDBName]map[string]interface{}{
+		INDEXEDDB_CACHE: map[string]interface{}{
+			"store": "static",
+			"keyPath": "url",
+			"indexes": map[string]interface{}{
+				"url": map[string]interface{}{
+					"unique": true,
+				},
+				"_exp": map[string]interface{}{
+					"unique": false,
+				},
+			},
+		},
+	}
 )
+
+func OpenDB(dbName IndexedDBName, reject js.Value) js.Value {
+	indb, ok := IndexedDBs[dbName]
+	if !ok {
+		msg := fmt.Sprintf("The IndexedDB %s does not exist.", dbName)
+		if reject.IsUndefined() || reject.IsNull() {
+			js.Global().Get("console").Call("error", msg)
+		} else {
+			reject.Invoke(js.Global().Get("Error").New(msg))
+		}
+		return js.ValueOf(nil)
+	}
+
+	db := js.Global().Get("indexedDB").Call("open", string(dbName))
+	db.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		msg := fmt.Sprintf(
+			"Please enable IndexedDB in your browser or update your browser to the latest version.")
+		if reject.IsUndefined() || reject.IsNull() {
+			js.Global().Get("console").Call("error", msg)
+		} else {
+			reject.Invoke(js.Global().Get("Error").New(msg))
+		}
+		return nil
+	}))
+
+	db.Set("onupgradeneeded", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		db := args[0].Get("target").Get("result")
+		store := db.Call("createObjectStore", indb["store"].(string), js.ValueOf(map[string]interface{}{
+			"keyPath": indb["keyPath"].(string),
+		}))
+
+		for index, indexConfig := range indb["indexes"].(map[string]interface{}) {
+			store.Call("createIndex", index, index, js.ValueOf(indexConfig.(map[string]interface{})))
+		}
+		return nil
+	}))
+
+	return db
+}
+
+func ClearExpiredCache() {
+	// open the cache
+	db := OpenDB(INDEXEDDB_CACHE, js.ValueOf(nil))
+	db.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		tx := args[0].Get("target").Get("result").Call("transaction", "static", "readwrite")
+		store := tx.Call("objectStore", "static")
+		index := store.Call("index", "_exp")
+		
+		// get all the expired items
+		bound := js.Global().Get("IDBKeyRange").Call("upperBound", js.ValueOf(time.Now().Unix()))
+		index.Call("openCursor", bound).Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+			cursor := args[0].Get("target").Get("result")
+			if cursor.IsUndefined() || cursor.IsNull() {
+				return nil
+			}
+			store.Call("delete", cursor.Get("value").Get("url"))
+			cursor.Call("continue")
+			return nil
+		}))
+		return nil
+	}))
+}
 
 /*
 	//var L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port) // Ravi TODO this should probably be revisited
@@ -121,6 +207,9 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 	}
 
 	ErrorDestructuringConfigObject := false
+
+	// clean up cache
+	go ClearExpiredCache()
 
 	js.Global().Get("Object").Call("entries", args[0]).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		key := args[0].Index(0).String()
@@ -535,29 +624,6 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		}
 		client := L8Clients[pURL.Scheme+"://"+pURL.Host]
 
-		// using indexDB to cache the static files
-		openDB := func() js.Value {
-			// open the indexedDB
-			db := js.Global().Get("indexedDB").Call("open", "__layer8_cache")
-			db.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-				reject.Invoke(js.Global().Get("Error").New(
-					"Please enable IndexedDB in your browser or update your browser to the latest version."))
-				return nil
-			}))
-			// create the object store
-			db.Set("onupgradeneeded", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-				db := args[0].Get("target").Get("result")
-				store := db.Call("createObjectStore", "static", js.ValueOf(map[string]interface{}{
-					"keyPath": "url",
-				}))
-				store.Call("createIndex", "url", "url", js.ValueOf(map[string]interface{}{
-					"unique": true,
-				}))
-				return nil
-			}))
-			return db
-		}
-
 		// fetch the static file from the server and store it in the cache
 		fetchStatic := func() {
 			resp := client.Do(
@@ -577,7 +643,7 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 			fileType := resHeaders.Call("get", js.ValueOf("content-type"))
 
 			// store the file in the cache
-			db := openDB()
+			db := OpenDB(INDEXEDDB_CACHE, reject)
 			db.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 				db := args[0].Get("target").Get("result")
 				tx := db.Call("transaction", "static", "readwrite")
@@ -586,6 +652,7 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 					"url":  spURL,
 					"body": jsBody,
 					"type": fileType,
+					"_exp": time.Now().Add(INDEXEDDB_CACHE_TTL).Unix(),
 				}))
 				return nil
 			}))
@@ -599,7 +666,7 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		}
 
 		// check if the file is in the cache
-		db := openDB()
+		db := OpenDB(INDEXEDDB_CACHE, reject)
 		db.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 			db := args[0].Get("target").Get("result")
 			tx := db.Call("transaction", "static", "readonly")
