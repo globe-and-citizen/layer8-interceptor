@@ -231,7 +231,12 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			// TODO: Send an encrypted ping / confirmation to the server using the shared secret
 			// just like the 1. Syn 2. Syn/Ack 3. Ack flow in a TCP handshake
 			EncryptedTunnelFlag = true
-			L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port)
+			L8Client, err = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port)
+			if err != nil {
+				reject.Invoke(js.Global().Get("Error").New(err.Error()))
+				EncryptedTunnelFlag = false
+				return
+			}
 			//fmt.Println("[interceptor] ", L8Client)
 			fmt.Println("[Interceptor] Encrypted tunnel successfully established.")
 			resolve.Invoke(true)

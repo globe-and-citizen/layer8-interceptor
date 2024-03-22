@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 
 	// "globe-and-citizen/layer8/utils" (Dep)
 	"net/http"
@@ -24,16 +25,29 @@ type ClientImpl interface {
 }
 
 // NewClient creates a new client with the given proxy server url
-func NewClient(scheme, host, port string) ClientImpl {
+func NewClient(protocol, host, port string) (ClientImpl, error) {
+
+	r, _ := regexp.Compile("[^a-zA-Z]")
+
+	if protocol == "" ||
+		len(protocol) > 5 ||
+		r.MatchString(protocol) {
+		return nil, fmt.Errorf("invalid protocol. Cannot create new layer8 client ")
+	}
+
+	if host == "" {
+		return nil, fmt.Errorf("invalid host. Cannot create New Client")
+	}
+
 	var ProxyURL string
 	if port != "" {
-		ProxyURL = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+		ProxyURL = fmt.Sprintf("%s://%s:%s", protocol, host, port)
 	} else {
-		ProxyURL = fmt.Sprintf("%s://%s", scheme, host)
+		ProxyURL = fmt.Sprintf("%s://%s", protocol, host)
 	}
 	return &Client{
 		proxyURL: ProxyURL,
-	}
+	}, nil
 }
 
 // Do sends a request to through the layer8 proxy server and returns a response
