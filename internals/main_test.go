@@ -13,9 +13,41 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	utils "github.com/globe-and-citizen/layer8-utils"
-	"github.com/google/uuid"
+	googleUUID "github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestNewClient(t *testing.T) {
+	testCases := map[string]struct {
+		protocol string
+		host     string
+		port     string
+		expected string
+	}{
+		"success case local":         {"http", "localhost", "5001", "http://localhost:5001"},
+		"success case remote":        {"https", "l8dp.net", "", "https://l8dp.net"},
+		"protocol blank":             {"", "l8dp.net", "5001", ""},
+		"protocol too long":          {"htttps", "l8dp.net", "5001", ""},
+		"protocol illegal character": {"https.", "l8dp.net", "5001", ""},
+		"host empty":                 {"http", "", "5001", ""},
+		"port non digit string 1":    {"http", "", "5001a", ""},
+		"port too long":              {"https", "l8dp.net", "655361", ""},
+		"non-digit port":             {"http", "l8dp.net", ".5001", ""},
+		"non-charater protocol":      {"http8", "l8dp.net", "5001", ""},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			client, err := NewClient(tc.protocol, tc.host, tc.port)
+			if err != nil {
+				assert.Empty(t, client)
+				assert.Equal(t, tc.expected, "")
+				return
+			}
+			assert.Equal(t, tc.expected, client.GetURL())
+		})
+	}
+}
 
 func TestClientDo(t *testing.T) {
 	// from "GenerateStandardToken" in server/utils/utils.go
@@ -79,6 +111,7 @@ func TestClientDo(t *testing.T) {
 			})
 			assert.NoError(t, err)
 
+			w.Header().Add("up_JWT", token)
 			w.WriteHeader(200)
 			w.Write(data)
 		default:
@@ -157,7 +190,7 @@ func TestClientDo(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, b64)
 
-	uuid := uuid.New().String()
+	uuid := googleUUID.New().String()
 
 	iClient := &http.Client{}
 	iReq, err := http.NewRequest("GET", mockProxyServer.URL+"/init-tunnel", bytes.NewBuffer([]byte(b64)))
@@ -186,17 +219,82 @@ func TestClientDo(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, symmkey)
 
-	// tunnel
+	// Tests of Client Functions
 	client := &Client{
 		proxyURL: mockProxyServer.URL,
 	}
 
-	res := client.Do(RequestURL, utils.NewRequest(RequestMethod, RequestHeaders, RequestPayload), symmkey, false, up_JWT, uuid)
-	assert.NotNil(t, res)
-	assert.Equal(t, ResponseStatusCode, res.Status)
-	for k, v := range ResponseHeader {
-		assert.Equal(t, v, res.Headers[k])
-	}
-	assert.Equal(t, ResponsePayload, res.Body)
-	assert.Equal(t, http.StatusText(ResponseStatusCode), res.StatusText)
+	// client.do
+
+	// client.transfer
+	t.Run("client.transfer(...)", func(t *testing.T) {
+		testCasesForStrings := map[string]struct {
+			backendURL     string
+			UpJWT          string
+			UUID           string
+			ExpectedStatus int
+		}{
+			"Success":      {RequestURL, up_JWT, uuid, 200},
+			"URL blank":    {"", up_JWT, uuid, 400},
+			"up_JWT blank": {RequestURL, "", uuid, 400},
+			"uuid blank":   {RequestURL, up_JWT, "", 400},
+		}
+
+		for name, tc := range testCasesForStrings {
+			t.Run(name, func(t *testing.T) {
+				res, err := client.transfer(symmkey, utils.NewRequest(RequestMethod, RequestHeaders, RequestPayload), tc.backendURL, false, tc.UpJWT, tc.UUID)
+				assert.Nil(t, err)
+				assert.Equal(t, tc.ExpectedStatus, res.Status)
+			})
+		}
+
+		testCasesOfNullPointers := map[string]struct {
+			SharedSecret   *utils.JWK
+			Request        *utils.Request
+			ExpectedStatus int
+		}{
+			"Success":            {symmkey, utils.NewRequest(RequestMethod, RequestHeaders, RequestPayload), 200},
+			"Nil Shared Secret":  {nil, utils.NewRequest(RequestMethod, RequestHeaders, RequestPayload), 400},
+			"Nil Client Request": {symmkey, nil, 400},
+		}
+
+		for name, tc := range testCasesOfNullPointers {
+			t.Run(name, func(t *testing.T) {
+				res, err := client.transfer(tc.SharedSecret, tc.Request, RequestURL, false, up_JWT, uuid)
+				assert.Nil(t, err)
+				assert.Equal(t, tc.ExpectedStatus, res.Status)
+			})
+		}
+
+	})
+
+	// client.Do
+	// What behaviour do we want if a POST is used, malformed request, etc?
+	t.Run("client.Do(...)", func(t *testing.T) {
+		testCases := map[string]struct {
+			Method   string
+			Headers  map[string]string
+			Payload  []byte
+			Expected int
+		}{
+			"Success case": {"GET", RequestHeaders, RequestPayload, 200},
+			// "'POST' not 'GET'": {"POST", RequestHeaders, RequestPayload, 200},
+			// "Empty headers map": {"GET", make(map[string]string), RequestPayload, 200},
+			// "Empty Payload":     {"GET", RequestHeaders, []byte{}},
+		}
+
+		for name, tc := range testCases {
+			t.Run(name, func(t *testing.T) {
+				malformedReq := utils.NewRequest(tc.Method, tc.Headers, tc.Payload)
+				res := client.Do(RequestURL, malformedReq, symmkey, false, up_JWT, uuid)
+				assert.NotNil(t, res)
+				assert.Equal(t, tc.Expected, res.Status) // 200, 500
+				for k, v := range ResponseHeader {
+					assert.Equal(t, v, res.Headers[k])
+				}
+				assert.Equal(t, ResponsePayload, res.Body)
+				assert.Equal(t, http.StatusText(ResponseStatusCode), res.StatusText)
+			})
+		}
+	})
 }

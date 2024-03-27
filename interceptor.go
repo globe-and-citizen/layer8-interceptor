@@ -350,7 +350,14 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 					port = "80"
 				}
 			}
-			L8Clients[provider] = internals.NewClient(proxyURL.Scheme, proxyURL.Hostname(), port)
+			L8Clients[provider], err = internals.NewClient(proxyURL.Scheme, proxyURL.Hostname(), port)
+
+			if err != nil {
+				reject.Invoke(js.Global().Get("Error").New(err.Error()))
+				EncryptedTunnelFlag = false
+				return
+			}
+
 			fmt.Printf("[%s] Encrypted tunnel successfully established.\n", provider)
 			resolve.Invoke(true)
 			return
