@@ -26,7 +26,7 @@ const (
 	INTERCEPTOR_VERSION = "0.0.14"
 
 	// IndexedDB constants
-	INDEXEDDB_CACHE IndexedDBName = "_layer8cache"
+	INDEXEDDB_CACHE     IndexedDBName = "_layer8cache"
 	INDEXEDDB_CACHE_TTL time.Duration = time.Hour * 24 * 2 // 2 days
 )
 
@@ -43,9 +43,9 @@ var (
 	L8Clients           map[string]internals.ClientImpl = make(map[string]internals.ClientImpl)
 
 	// IndexedDBs is a map of the IndexedDBs that the interceptor uses
-	IndexedDBs 			= map[IndexedDBName]map[string]interface{}{
+	IndexedDBs = map[IndexedDBName]map[string]interface{}{
 		INDEXEDDB_CACHE: map[string]interface{}{
-			"store": "static",
+			"store":   "static",
 			"keyPath": "url",
 			"indexes": map[string]interface{}{
 				"url": map[string]interface{}{
@@ -105,7 +105,7 @@ func ClearExpiredCache() {
 		tx := args[0].Get("target").Get("result").Call("transaction", "static", "readwrite")
 		store := tx.Call("objectStore", "static")
 		index := store.Call("index", "_exp")
-		
+
 		// get all the expired items
 		bound := js.Global().Get("IDBKeyRange").Call("upperBound", js.ValueOf(time.Now().Unix()))
 		index.Call("openCursor", bound).Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
@@ -350,7 +350,14 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 					port = "80"
 				}
 			}
-			L8Clients[provider] = internals.NewClient(proxyURL.Scheme, proxyURL.Hostname(), port)
+			L8Clients[provider], err = internals.NewClient(proxyURL.Scheme, proxyURL.Hostname(), port)
+
+			if err != nil {
+				reject.Invoke(js.Global().Get("Error").New(err.Error()))
+				EncryptedTunnelFlag = false
+				return
+			}
+
 			fmt.Printf("[%s] Encrypted tunnel successfully established.\n", provider)
 			resolve.Invoke(true)
 			return
