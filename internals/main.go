@@ -80,14 +80,14 @@ func (c *Client) transfer(sharedSecret *utils.JWK, req *utils.Request, url strin
 	if sharedSecret == nil || req == nil {
 		return &utils.Response{
 			Status:     400,
-			StatusText: "client.transfer(...) error. Malformed url, UpJWT, or UUID",
+			StatusText: "client.transfer(...) error. The 'sharedSecret' or req parameter was nil pointer",
 		}, nil
 	}
 
 	if url == "" || UpJWT == "" || UUID == "" {
 		return &utils.Response{
 			Status:     400,
-			StatusText: "client.transfer(...) error. Malformed url, UpJWT, or UUID",
+			StatusText: "client.transfer(...) error. The 'url', 'UpJWT', or 'UUID' was blank",
 		}, nil
 	}
 
