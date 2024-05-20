@@ -16,6 +16,8 @@ import (
 
 	utils "github.com/globe-and-citizen/layer8-utils"
 
+	localUtils "globe-and-citizen/layer8-interceptor/utils"
+
 	uuid "github.com/google/uuid"
 )
 
@@ -35,6 +37,7 @@ var (
 	Layer8LightsailURL  string
 	Counter             int
 	EncryptedTunnelFlag bool
+	IsJwtValid          bool
 	privJWK_ecdh        *utils.JWK
 	pubJWK_ecdh         *utils.JWK
 	userSymmetricKey    *utils.JWK
@@ -317,6 +320,8 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 
 			UpJWT = data["up-JWT"].(string)
 
+			IsJwtValid = true
+
 			server_pubKeyECDH, err := utils.JWKFromMap(data)
 			if err != nil {
 				reject.Invoke(js.Global().Get("Error").New(err.Error()))
@@ -389,6 +394,29 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		resolve := resolve_reject[0]
 		reject := resolve_reject[1]
 
+		// TODO: Check if the token is still valid
+		exp, err := localUtils.ParseJWT(UpJWT)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New("The UpJWT is invalid."))
+			return nil
+		}
+
+		err = localUtils.CheckJwtExpiry(exp)
+		if err != nil {
+			IsJwtValid = false
+		}
+
+		spURL := args[0].String()
+		if len(spURL) <= 0 {
+			reject.Invoke(js.Global().Get("Error").New("Invalid URL provided to fetch call."))
+			return nil
+		}
+
+		if IsJwtValid {
+			fmt.Println("[Interceptor] UpJWT has expired. Refreshing JWTs.")
+			refreshJWTs(this, []js.Value{js.ValueOf(spURL)})
+		}
+
 		if !EncryptedTunnelFlag {
 			reject.Invoke(js.Global().Get("Error").New("The Encrypted tunnel is closed. Reload page."))
 			return nil
@@ -396,12 +424,6 @@ func fetch(this js.Value, args []js.Value) interface{} {
 
 		if len(args) == 0 {
 			reject.Invoke(js.Global().Get("Error").New("No URL provided to fetch call."))
-			return nil
-		}
-
-		spURL := args[0].String()
-		if len(spURL) <= 0 {
-			reject.Invoke(js.Global().Get("Error").New("Invalid URL provided to fetch call."))
 			return nil
 		}
 
@@ -696,6 +718,85 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 			}))
 			return nil
 		}))
+
+		return nil
+	}))
+}
+
+func refreshJWTs(this js.Value, args []js.Value) interface{} {
+	var (
+		provider string
+		proxy    string = "http://localhost:5001" // set LAYER8_PROXY in the environment to override
+	)
+
+	provider = args[0].String()
+
+	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		resolve := args[0]
+		reject := args[1]
+
+		refreshJWTs := func(provider string) {
+			// parse the provider URL to maintain a pattern of scheme://host:port
+			// in the L8Clients map
+			provider, err := getHost(provider)
+			if err != nil {
+				fmt.Println("[Interceptor]", err.Error())
+				EncryptedTunnelFlag = false
+				reject.Invoke(js.Global().Get("Error").New("Unable to parse the provider URL. "))
+				return
+			}
+
+			proxy = fmt.Sprintf("%s/refresh-jwts?backend=%s", proxy, provider)
+
+			// Make an empty POST request to the proxy to refresh the JWTs
+			body := []byte{}
+			client := &http.Client{}
+			req, err := http.NewRequest("POST", proxy, bytes.NewBuffer(body))
+			if err != nil {
+				fmt.Println(err.Error())
+				EncryptedTunnelFlag = false
+				reject.Invoke(js.Global().Get("Error").New("Creation of initialization POST request failed. "))
+				return
+			}
+
+			req.Header.Add("x-client-uuid", UUID)
+
+			// send request
+			resp, err := client.Do(req)
+			if err != nil {
+				fmt.Println(err.Error())
+				reject.Invoke(js.Global().Get("Error").New("Initialization POST request to Proxy failed. "))
+				EncryptedTunnelFlag = false
+				return
+			}
+
+			if resp.StatusCode == 401 {
+				reject.Invoke(js.Global().Get("Error").New("401 response from proxy, user is not authorized. "))
+				EncryptedTunnelFlag = false
+				return
+			}
+
+			Respbody := utils.ReadResponseBody(resp.Body)
+
+			data := map[string]interface{}{}
+
+			err = json.Unmarshal(Respbody, &data)
+			if err != nil {
+				reject.Invoke(js.Global().Get("Error").New("The data received from the proxy could not be unmarshalled: ", err.Error()))
+				EncryptedTunnelFlag = false
+				return
+			}
+
+			UpJWT = data["up-JWT"].(string)
+
+			IsJwtValid = true
+
+			resolve.Invoke(true)
+
+			return
+		}
+
+		go refreshJWTs(provider)
 
 		return nil
 	}))
