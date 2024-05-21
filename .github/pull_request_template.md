@@ -1,12 +1,7 @@
----
-name: Generic PR Template
-about: A Suite of Manual Tests
-title: ''
-labels: ''
-assignees: ''
+## PR Description
 
----
 
+## Manual Test Suite
 SECTION 1: WEVE GOT POEMS (http://localhost:5173/)
 [ ] Log in with 'tester' / '1234'
 [ ] Log in anonymously with Layer8
