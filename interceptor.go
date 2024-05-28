@@ -465,7 +465,6 @@ func fetch(this js.Value, args []js.Value) interface{} {
 					// body = js.ValueOf(map[string]interface{}{}) <= this will err out as "Uncaught (in promise) Error: invalid character '<' looking for beginning of value"
 					body = js.ValueOf("{}")
 					bodyMap["url_path"] = urlPath
-					// bodyMap["query_params"] = map[sting]sting {"id": "2"}
 				} else {
 					err := json.Unmarshal([]byte(body.String()), &bodyMap)
 					if err != nil {
