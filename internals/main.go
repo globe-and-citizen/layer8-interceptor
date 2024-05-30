@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 
 	// "globe-and-citizen/layer8/utils" (Dep)
 	"net/http"
@@ -18,22 +19,46 @@ type Client struct {
 }
 
 type ClientImpl interface {
+	GetURL() string
 	Do(
 		url string, req *utils.Request, sharedSecret *utils.JWK, isStatic bool, UpJWT, UUID string,
 	) *utils.Response
 }
 
 // NewClient creates a new client with the given proxy server url
-func NewClient(scheme, host, port string) ClientImpl {
+func NewClient(protocol, host, port string) (ClientImpl, error) {
+
+	r1, _ := regexp.Compile("[^a-zA-Z]")
+
+	if protocol == "" ||
+		len(protocol) > 5 ||
+		r1.MatchString(protocol) {
+		return nil, fmt.Errorf("invalid protocol. Cannot create new layer8 client ")
+	}
+
+	if host == "" {
+		return nil, fmt.Errorf("invalid host. Cannot create New Client")
+	}
+
+	r1, _ = regexp.Compile("[^0-9]")
+	if len(port) >= 6 ||
+		r1.MatchString(port) {
+		return nil, fmt.Errorf("invalid port. Cannot create new layer8 client ")
+	}
+
 	var ProxyURL string
 	if port != "" {
-		ProxyURL = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+		ProxyURL = fmt.Sprintf("%s://%s:%s", protocol, host, port)
 	} else {
-		ProxyURL = fmt.Sprintf("%s://%s", scheme, host)
+		ProxyURL = fmt.Sprintf("%s://%s", protocol, host)
 	}
 	return &Client{
 		proxyURL: ProxyURL,
-	}
+	}, nil
+}
+
+func (c *Client) GetURL() string {
+	return c.proxyURL
 }
 
 // Do sends a request to through the layer8 proxy server and returns a response
@@ -49,10 +74,23 @@ func (c *Client) Do(url string, req *utils.Request, sharedSecret *utils.JWK, isS
 	return res
 }
 
-// TODO: Daniel, can client.transfer and client.do be combined?
-// If not, why keep them separate?
-// transfer sends the request to the remote server through the layer8 proxy server
+// Performs Prechecks and then transforms the byte slice to a utils.Response struct.
 func (c *Client) transfer(sharedSecret *utils.JWK, req *utils.Request, url string, isStatic bool, UpJWT, UUID string) (*utils.Response, error) {
+	// Prechecks
+	if sharedSecret == nil || req == nil {
+		return &utils.Response{
+			Status:     400,
+			StatusText: "client.transfer(...) error. The 'sharedSecret' or req parameter was nil pointer",
+		}, nil
+	}
+
+	if url == "" || UpJWT == "" || UUID == "" {
+		return &utils.Response{
+			Status:     400,
+			StatusText: "client.transfer(...) error. The 'url', 'UpJWT', or 'UUID' was blank",
+		}, nil
+	}
+
 	// send the request
 	res := c.do(req, sharedSecret, url, isStatic, UpJWT, UUID)
 	// decode response body
