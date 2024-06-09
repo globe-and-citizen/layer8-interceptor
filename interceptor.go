@@ -26,7 +26,6 @@ type IndexedDBName string
 
 const (
 	INTERCEPTOR_VERSION = "0.0.14"
-
 	// IndexedDB constants
 	INDEXEDDB_CACHE     IndexedDBName = "_layer8cache"
 	INDEXEDDB_CACHE_TTL time.Duration = time.Hour * 24 * 2 // 2 days
@@ -37,7 +36,6 @@ var (
 	Layer8LightsailURL  string
 	Counter             int
 	EncryptedTunnelFlag bool
-	IsJwtValid          bool
 	privJWK_ecdh        *utils.JWK
 	pubJWK_ecdh         *utils.JWK
 	userSymmetricKey    *utils.JWK
@@ -320,7 +318,7 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 
 			UpJWT = data["up-JWT"].(string)
 
-			IsJwtValid = true
+			internals.IsJwtValid = true
 
 			server_pubKeyECDH, err := utils.JWKFromMap(data)
 			if err != nil {
@@ -403,7 +401,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 
 		err = localUtils.CheckJwtExpiry(exp)
 		if err != nil {
-			IsJwtValid = false
+			internals.IsJwtValid = false
 		}
 
 		spURL := args[0].String()
@@ -412,7 +410,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			return nil
 		}
 
-		if IsJwtValid {
+		if !internals.IsJwtValid {
 			fmt.Println("[Interceptor] UpJWT has expired. Refreshing JWTs.")
 			refreshJWTs(this, []js.Value{js.ValueOf(spURL)})
 		}
@@ -759,8 +757,7 @@ func refreshJWTs(this js.Value, args []js.Value) interface{} {
 				return
 			}
 
-			req.Header.Add("x-client-uuid", UUID)
-
+			req.Header.Add("x-ecdh-init", "b64PubJWK")
 			// send request
 			resp, err := client.Do(req)
 			if err != nil {
@@ -789,7 +786,7 @@ func refreshJWTs(this js.Value, args []js.Value) interface{} {
 
 			UpJWT = data["up-JWT"].(string)
 
-			IsJwtValid = true
+			internals.IsJwtValid = true
 
 			resolve.Invoke(true)
 

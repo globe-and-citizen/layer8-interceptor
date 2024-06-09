@@ -14,6 +14,8 @@ import (
 	utils "github.com/globe-and-citizen/layer8-utils"
 )
 
+var IsJwtValid bool
+
 type Client struct {
 	proxyURL string
 }
@@ -175,6 +177,9 @@ func (c *Client) do(
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("up-JWT", UpJWT)
 	r.Header.Add("x-client-uuid", UUID)
+	if IsJwtValid {
+	// r.Header.Add("x-refresh-jwt", "true")
+	}
 	if isStatic {
 		r.Header.Add("X-Static", "true")
 	}
