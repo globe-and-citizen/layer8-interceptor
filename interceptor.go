@@ -457,8 +457,12 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			switch strings.ToLower(userHeaderMap["Content-Type"]) {
 			case "application/json": // Note this is the default that GET requests travel through
 				// Converting the body to Golag or setting it as null/nil
-				bodyMap := map[string]interface{}{}
+				urlPath := strings.Replace(spURL, host, "", 1)
+				bodyMap := map[string]interface{}{
+					"__url_path": urlPath,
+				}
 				body := options.Get("body")
+				// fmt.Println("[Interceptor] URL Path: ", urlPath) // For debugging purposes
 				if body.String() == "<undefined>" {
 					// body = js.ValueOf(map[string]interface{}{}) <= this will err out as "Uncaught (in promise) Error: invalid character '<' looking for beginning of value"
 					body = js.ValueOf("{}")
@@ -469,6 +473,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 						return
 					}
 				}
+				// fmt.Println("[Interceptor] BodyMap: ", bodyMap) // For debugging purposes
 				// encode the body to json
 				bodyByte, err := json.Marshal(bodyMap)
 				if err != nil {
