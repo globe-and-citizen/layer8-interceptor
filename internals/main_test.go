@@ -64,7 +64,7 @@ func TestClientDo(t *testing.T) {
 
 	var (
 		RequestMethod  = "GET"
-		RequestURL     = "https://test.layer8.com/"
+		RequestURL     = "https://test.layer8.com/test"
 		RequestHeaders = map[string]string{
 			"Content-Type":  "application/json",
 			"X-Test-Header": "test",
