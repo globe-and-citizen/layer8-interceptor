@@ -458,6 +458,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			case "application/json": // Note this is the default that GET requests travel through
 				// Converting the body to Golag or setting it as null/nil
 				urlPath := strings.Replace(spURL, host, "", 1)
+				fmt.Println("[Interceptor] URL Path: ", urlPath)
 				bodyMap := map[string]interface{}{
 					"__url_path": urlPath,
 				}
@@ -636,10 +637,29 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		}
 		client := L8Clients[pURL.Scheme+"://"+pURL.Host]
 
+		host, err := getHost(spURL)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+
+		urlPath := strings.Replace(spURL, host, "", 1)
+
+		bodyMap := map[string]interface{}{
+			"__url_path": urlPath,
+		}
+
+		bodyByte, err := json.Marshal(bodyMap)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+
 		// fetch the static file from the server and store it in the cache
 		fetchStatic := func() {
+
 			resp := client.Do(
-				spURL, utils.NewRequest("GET", make(map[string]string), nil),
+				spURL, utils.NewRequest("GET", make(map[string]string), bodyByte),
 				userSymmetricKey, true, UpJWT, UUID)
 
 			// convert response body to js arraybuffer

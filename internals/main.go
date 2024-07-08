@@ -160,7 +160,14 @@ func (c *Client) do(
 	client := &http.Client{}
 	// !NOTE: GET Requests are also converted to POST requests
 	// fmt.Println("[Interceptor] c.proxyURL+parsedURL.Path: ", c.proxyURL+parsedURL.Path+"?"+parsedURL.RawQuery) // For debugging purposes
-	r, err := http.NewRequest("POST", c.proxyURL, bytes.NewBuffer(data))
+	var url string
+	if isStatic {
+		fmt.Println("[Interceptor] c.proxyURL+parsedURL.Path: ", c.proxyURL+parsedURL.Path)
+		url = c.proxyURL + parsedURL.Path
+	} else {
+		url = c.proxyURL
+	}
+	r, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	if err != nil {
 		res := &utils.Response{
 			Status:     500,
