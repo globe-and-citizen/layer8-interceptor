@@ -643,7 +643,11 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 			return nil
 		}
 
+		host = host + "/media"
+
 		urlPath := strings.Replace(spURL, host, "", 1)
+
+		fmt.Printf("[Interceptor] spURL: %s, host: %s, urlPath: %s\n", spURL, host, urlPath)
 
 		bodyMap := map[string]interface{}{
 			"__url_path": urlPath,
@@ -659,7 +663,7 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		fetchStatic := func() {
 
 			resp := client.Do(
-				spURL, utils.NewRequest("GET", make(map[string]string), bodyByte),
+				host, utils.NewRequest("GET", make(map[string]string), bodyByte),
 				userSymmetricKey, true, UpJWT, UUID)
 
 			// convert response body to js arraybuffer

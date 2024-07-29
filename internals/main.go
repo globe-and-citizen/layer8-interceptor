@@ -162,7 +162,6 @@ func (c *Client) do(
 	// fmt.Println("[Interceptor] c.proxyURL+parsedURL.Path: ", c.proxyURL+parsedURL.Path+"?"+parsedURL.RawQuery) // For debugging purposes
 	var url string
 	if isStatic {
-		fmt.Println("[Interceptor] c.proxyURL+parsedURL.Path: ", c.proxyURL+parsedURL.Path)
 		url = c.proxyURL + parsedURL.Path
 	} else {
 		url = c.proxyURL
