@@ -158,14 +158,17 @@ func (c *Client) do(
 	}
 	// create request
 	client := &http.Client{}
+  
 	// !NOTE: GET Requests are also converted to POST requests
 	// fmt.Println("[Interceptor] c.proxyURL+parsedURL.Path: ", c.proxyURL+parsedURL.Path+"?"+parsedURL.RawQuery) // For debugging purposes
-	var url string
+	
+  var url string
 	if isStatic {
 		url = c.proxyURL + parsedURL.Path
 	} else {
 		url = c.proxyURL
 	}
+  
 	r, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	if err != nil {
 		res := &utils.Response{
@@ -176,7 +179,6 @@ func (c *Client) do(
 		resByte, _ := res.ToJSON()
 		return resByte
 	}
-
 	// Add headers to the interceptor request.
 	// Note that at this point, the user's headers are bundled into the encrypted body of the interceptor's request
 	r.Header.Add("X-Forwarded-Host", parsedURL.Host)

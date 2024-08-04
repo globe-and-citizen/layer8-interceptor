@@ -463,7 +463,6 @@ func fetch(this js.Value, args []js.Value) interface{} {
 					"__url_path": urlPath,
 				}
 				body := options.Get("body")
-				// fmt.Println("[Interceptor] URL Path: ", urlPath) // For debugging purposes
 				if body.String() == "<undefined>" {
 					// body = js.ValueOf(map[string]interface{}{}) <= this will err out as "Uncaught (in promise) Error: invalid character '<' looking for beginning of value"
 					body = js.ValueOf("{}")
@@ -474,7 +473,6 @@ func fetch(this js.Value, args []js.Value) interface{} {
 						return
 					}
 				}
-				// fmt.Println("[Interceptor] BodyMap: ", bodyMap) // For debugging purposes
 				// encode the body to json
 				bodyByte, err := json.Marshal(bodyMap)
 				if err != nil {
