@@ -199,9 +199,9 @@ func getHost(u string) (string, error) {
 func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 	// Convert JS values into useable Golang variables
 	var (
-		providers  []string
-		proxy      string = "https://layer8devproxy.net" // set LAYER8_PROXY in the environment to override
-		mode       string = "prod"
+		providers []string
+		proxy     string = "https://layer8devproxy.net" // set LAYER8_PROXY in the environment to override
+		mode      string = "prod"
 	)
 	if len(args) > 1 {
 		mode = args[1].String()
@@ -465,7 +465,6 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			case "application/json": // Note this is the default that GET requests travel through
 				// Converting the body to Golag or setting it as null/nil
 				urlPath := strings.Replace(spURL, host, "", 1)
-				fmt.Println("[Interceptor] URL Path: ", urlPath)
 				bodyMap := map[string]interface{}{
 					"__url_path": urlPath,
 				}
@@ -651,8 +650,6 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		host = host + staticPath
 
 		urlPath := strings.Replace(spURL, host, "", 1)
-
-		fmt.Printf("[Interceptor] spURL: %s, host: %s, urlPath: %s\n", spURL, host, urlPath)
 
 		bodyMap := map[string]interface{}{
 			"__url_path": urlPath,
