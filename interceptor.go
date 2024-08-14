@@ -40,6 +40,7 @@ var (
 	userSymmetricKey    *utils.JWK
 	UpJWT               string
 	UUID                string
+	staticPath          string
 	L8Clients           map[string]internals.ClientImpl = make(map[string]internals.ClientImpl)
 
 	// IndexedDBs is a map of the IndexedDBs that the interceptor uses
@@ -198,12 +199,18 @@ func getHost(u string) (string, error) {
 func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 	// Convert JS values into useable Golang variables
 	var (
-		providers []string
-		proxy     string = "https://layer8devproxy.net" // set LAYER8_PROXY in the environment to override
-		mode      string = "prod"
+		providers  []string
+		proxy      string = "https://layer8devproxy.net" // set LAYER8_PROXY in the environment to override
+		mode       string = "prod"
 	)
 	if len(args) > 1 {
 		mode = args[1].String()
+	}
+
+	if len(args) > 2 {
+		staticPath = args[2].String()
+	} else {
+		staticPath = "/media"
 	}
 
 	ErrorDestructuringConfigObject := false
@@ -641,7 +648,7 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 			return nil
 		}
 
-		host = host + "/media"
+		host = host + staticPath
 
 		urlPath := strings.Replace(spURL, host, "", 1)
 
