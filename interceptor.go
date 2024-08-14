@@ -207,12 +207,6 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 		mode = args[1].String()
 	}
 
-	if len(args) > 2 {
-		staticPath = args[2].String()
-	} else {
-		staticPath = "/media"
-	}
-
 	ErrorDestructuringConfigObject := false
 
 	// clean up cache
@@ -235,6 +229,8 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 					proxy = os.Getenv("LAYER8_PROXY")
 				}
 			}
+		case "staticPath":
+			staticPath = args[0].Index(1).String()
 		default:
 			ErrorDestructuringConfigObject = true
 		}
