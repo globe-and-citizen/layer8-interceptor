@@ -502,6 +502,17 @@ func fetch(this js.Value, args []js.Value) interface{} {
 					formdata   = make(map[string]interface{}, dataLength)
 				)
 
+				urlPath := strings.Replace(spURL, host, "", 1)
+
+				dataToAdd := map[string]interface{}{
+					"_type": "String",
+					"value": urlPath,
+				}
+
+				if _, ok := formdata["__url_path"]; !ok {
+					formdata["__url_path"] = []map[string]interface{}{dataToAdd}
+				}
+
 				js.Global().Get("Array").Call("from", body.Call("keys")).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 					var (
 						key       = args[0].String()
