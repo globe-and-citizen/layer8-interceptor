@@ -157,3 +157,5 @@ dist
 .pnp.*
 
 /bin/interceptor.wasm
+
+.vscode

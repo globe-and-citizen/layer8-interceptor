@@ -3,17 +3,19 @@
 on:
   pull_request:
     types: [opened, reopened]
-    branches: [main]
+    branches: 
+      - development
+      - main
 
 jobs:
   testing:
     runs-on: ubuntu-latest
-    steps:
+    steps: 
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Set Up Node
-        uses: actions/setup-node@v3
+      - name: Set up Go
+        uses: actions/setup-go@v3
         with:
-          node-version: "20"
-      - name: Run Testing
-        run: npm test
+          go-version: '1.21'
+      - name: "Run Unit Tests"
+        run:  go test -v globe-and-citizen/layer8-interceptor/internals

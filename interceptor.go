@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"globe-and-citizen/layer8-interceptor/internals"
+	"os"
 	"time"
 
 	"net/http"
+	"net/url"
 	"strings"
 	"syscall/js"
 
@@ -18,13 +20,18 @@ import (
 )
 
 // Declare global constants
-const INTERCEPTOR_VERSION = "0.0.14"
+type IndexedDBName string
+
+const (
+	INTERCEPTOR_VERSION = "0.0.14"
+
+	// IndexedDB constants
+	INDEXEDDB_CACHE     IndexedDBName = "_layer8cache"
+	INDEXEDDB_CACHE_TTL time.Duration = time.Hour * 24 * 2 // 2 days
+)
 
 // Declare global variables
 var (
-	Layer8Scheme        string
-	Layer8Host          string
-	Layer8Port          string
 	Layer8LightsailURL  string
 	Counter             int
 	EncryptedTunnelFlag bool
@@ -33,8 +40,87 @@ var (
 	userSymmetricKey    *utils.JWK
 	UpJWT               string
 	UUID                string
-	L8Client            internals.ClientImpl
+	staticPath          string
+	L8Clients           map[string]internals.ClientImpl = make(map[string]internals.ClientImpl)
+
+	// IndexedDBs is a map of the IndexedDBs that the interceptor uses
+	IndexedDBs = map[IndexedDBName]map[string]interface{}{
+		INDEXEDDB_CACHE: map[string]interface{}{
+			"store":   "static",
+			"keyPath": "url",
+			"indexes": map[string]interface{}{
+				"url": map[string]interface{}{
+					"unique": true,
+				},
+				"_exp": map[string]interface{}{
+					"unique": false,
+				},
+			},
+		},
+	}
 )
+
+func OpenDB(dbName IndexedDBName, reject js.Value) js.Value {
+	indb, ok := IndexedDBs[dbName]
+	if !ok {
+		msg := fmt.Sprintf("The IndexedDB %s does not exist.", dbName)
+		if reject.IsUndefined() || reject.IsNull() {
+			js.Global().Get("console").Call("error", msg)
+		} else {
+			reject.Invoke(js.Global().Get("Error").New(msg))
+		}
+		return js.ValueOf(nil)
+	}
+
+	db := js.Global().Get("indexedDB").Call("open", string(dbName))
+	db.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		msg := fmt.Sprintf(
+			"Please enable IndexedDB in your browser or update your browser to the latest version.")
+		if reject.IsUndefined() || reject.IsNull() {
+			js.Global().Get("console").Call("error", msg)
+		} else {
+			reject.Invoke(js.Global().Get("Error").New(msg))
+		}
+		return nil
+	}))
+
+	db.Set("onupgradeneeded", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		db := args[0].Get("target").Get("result")
+		store := db.Call("createObjectStore", indb["store"].(string), js.ValueOf(map[string]interface{}{
+			"keyPath": indb["keyPath"].(string),
+		}))
+
+		for index, indexConfig := range indb["indexes"].(map[string]interface{}) {
+			store.Call("createIndex", index, index, js.ValueOf(indexConfig.(map[string]interface{})))
+		}
+		return nil
+	}))
+
+	return db
+}
+
+func ClearExpiredCache() {
+	// open the cache
+	db := OpenDB(INDEXEDDB_CACHE, js.ValueOf(nil))
+	db.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		tx := args[0].Get("target").Get("result").Call("transaction", "static", "readwrite")
+		store := tx.Call("objectStore", "static")
+		index := store.Call("index", "_exp")
+
+		// get all the expired items
+		bound := js.Global().Get("IDBKeyRange").Call("upperBound", js.ValueOf(time.Now().Unix()))
+		index.Call("openCursor", bound).Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+			cursor := args[0].Get("target").Get("result")
+			if cursor.IsUndefined() || cursor.IsNull() {
+				return nil
+			}
+			store.Call("delete", cursor.Get("value").Get("url"))
+			cursor.Call("continue")
+			return nil
+		}))
+		return nil
+	}))
+}
 
 /*
 	//var L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port) // Ravi TODO this should probably be revisited
@@ -43,11 +129,6 @@ var (
 func main() {
 	// Create channel to keep the Go thread alive
 	c := make(chan struct{})
-
-	// Initialize global variables
-	Layer8Scheme = ""
-	Layer8Host = ""
-	Layer8Port = ""
 
 	EncryptedTunnelFlag = false
 
@@ -103,29 +184,53 @@ func persistenceCheck(this js.Value, args []js.Value) interface{} {
 	return promise
 }
 
+func getHost(u string) (string, error) {
+	p, err := url.Parse(u)
+	if err != nil {
+		return "", err
+	}
+	res := p.Scheme + "://" + p.Hostname()
+	if p.Port() != "" {
+		res = res + ":" + p.Port()
+	}
+	return res, nil
+}
+
 func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 	// Convert JS values into useable Golang variables
-	ServiceProviderURL := ""
-	Layer8Scheme := ""
-	Layer8Host := ""
-	Layer8Port := ""
+	var (
+		providers []string
+		proxy     string = "https://layer8devproxy.net" // set LAYER8_PROXY in the environment to override
+		mode      string = "prod"
+	)
+	if len(args) > 1 {
+		mode = args[1].String()
+	}
+
 	ErrorDestructuringConfigObject := false
 
+	// clean up cache
+	go ClearExpiredCache()
+
 	js.Global().Get("Object").Call("entries", args[0]).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		// fmt.Println("Key: ", args[0].Index(0).String())   // key
 		key := args[0].Index(0).String()
-		// fmt.Println("Value: ", args[0].Index(1).String()) // value
-		value := args[0].Index(1).String()
 
 		switch key {
-		case "ServiceProviderURL":
-			ServiceProviderURL = value
-		case "Layer8Scheme":
-			Layer8Scheme = value
-		case "Layer8Host":
-			Layer8Host = value
-		case "Layer8Port":
-			Layer8Port = value
+		case "providers":
+			providers = make([]string, args[0].Index(1).Length())
+			for i := 0; i < args[0].Index(1).Get("length").Int(); i++ {
+				providers[i] = args[0].Index(1).Index(i).String()
+			}
+		case "proxy":
+			if mode == "dev" {
+				proxy = args[0].Index(1).String()
+			} else {
+				if os.Getenv("LAYER8_PROXY") != "" {
+					proxy = os.Getenv("LAYER8_PROXY")
+				}
+			}
+		case "staticPath":
+			staticPath = args[0].Index(1).String()
 		default:
 			ErrorDestructuringConfigObject = true
 		}
@@ -145,8 +250,17 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 		resolve := args[0]
 		reject := args[1]
 
-		go func() {
-			var err error
+		initTunnel := func(provider string) {
+			// parse the provider URL to maintain a pattern of scheme://host:port
+			// in the L8Clients map
+			provider, err := getHost(provider)
+			if err != nil {
+				fmt.Println("[Interceptor]", err.Error())
+				EncryptedTunnelFlag = false
+				reject.Invoke(js.Global().Get("Error").New("Unable to parse the provider URL. "))
+				return
+			}
+
 			privJWK_ecdh, pubJWK_ecdh, err = utils.GenerateKeyPair(utils.ECDH)
 			if err != nil {
 				fmt.Println("[Interceptor]", err.Error())
@@ -163,16 +277,10 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 				return
 			}
 
-			var ProxyURL string
-			if Layer8Port != "" {
-				ProxyURL = fmt.Sprintf("%s://%s:%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, Layer8Port, ServiceProviderURL)
-			} else {
-				ProxyURL = fmt.Sprintf("%s://%s/init-tunnel?backend=%s", Layer8Scheme, Layer8Host, ServiceProviderURL)
-			}
+			proxy = fmt.Sprintf("%s/init-tunnel?backend=%s", proxy, provider)
 
-			// fmt.Println("[Interceptor]", ProxyURL)
 			client := &http.Client{}
-			req, err := http.NewRequest("POST", ProxyURL, bytes.NewBuffer([]byte(b64PubJWK)))
+			req, err := http.NewRequest("POST", proxy, bytes.NewBuffer([]byte(b64PubJWK)))
 			if err != nil {
 				fmt.Println(err.Error())
 				EncryptedTunnelFlag = false
@@ -231,12 +339,36 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 			// TODO: Send an encrypted ping / confirmation to the server using the shared secret
 			// just like the 1. Syn 2. Syn/Ack 3. Ack flow in a TCP handshake
 			EncryptedTunnelFlag = true
-			L8Client = internals.NewClient(Layer8Scheme, Layer8Host, Layer8Port)
-			//fmt.Println("[interceptor] ", L8Client)
-			fmt.Println("[Interceptor] Encrypted tunnel successfully established.")
+			proxyURL, err := url.Parse(proxy)
+			if err != nil {
+				reject.Invoke(js.Global().Get("Error").New(err.Error()))
+				EncryptedTunnelFlag = false
+				return
+			}
+			port := proxyURL.Port()
+			if port == "" {
+				if proxyURL.Scheme == "https" {
+					port = "443"
+				} else {
+					port = "80"
+				}
+			}
+			L8Clients[provider], err = internals.NewClient(proxyURL.Scheme, proxyURL.Hostname(), port)
+
+			if err != nil {
+				reject.Invoke(js.Global().Get("Error").New(err.Error()))
+				EncryptedTunnelFlag = false
+				return
+			}
+
+			fmt.Printf("[%s] Encrypted tunnel successfully established.\n", provider)
 			resolve.Invoke(true)
 			return
-		}()
+		}
+
+		for _, provider := range providers {
+			go initTunnel(provider)
+		}
 
 		return nil
 	}))
@@ -270,8 +402,8 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			return nil
 		}
 
-		url := args[0].String()
-		if len(url) <= 0 {
+		spURL := args[0].String()
+		if len(spURL) <= 0 {
 			reject.Invoke(js.Global().Get("Error").New("Invalid URL provided to fetch call."))
 			return nil
 		}
@@ -279,7 +411,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		options := js.ValueOf(map[string]interface{}{
 			"method":  "GET", // Set HTTP "GET" request to be the default
 			"headers": js.ValueOf(map[string]interface{}{}),
-			"body":    "<undefined>",
+			"body":    js.ValueOf("<undefined>"),
 		})
 
 		if len(args) > 1 {
@@ -307,8 +439,20 @@ func fetch(this js.Value, args []js.Value) interface{} {
 		// TODO: If it's a GET request, is this still necessary / appropriate?
 		// In the switch statement below, all GET requests are given a body of '{}'. On arrival in the sever, this should actually be `undefined`.
 		if _, ok := userHeaderMap["Content-Type"]; !ok {
-			userHeaderMap["Content-Type"] = "application/json"
+			body := options.Get("body")
+			if body.String() != "<undefined>" && body.Get("constructor").Get("name").String() == "FormData" {
+				userHeaderMap["Content-Type"] = "multipart/form-data"
+			} else {
+				userHeaderMap["Content-Type"] = "application/json"
+			}
 		}
+
+		host, err := getHost(spURL)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+		client := L8Clients[host]
 
 		go func() {
 			var res *utils.Response
@@ -316,7 +460,10 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			switch strings.ToLower(userHeaderMap["Content-Type"]) {
 			case "application/json": // Note this is the default that GET requests travel through
 				// Converting the body to Golag or setting it as null/nil
-				bodyMap := map[string]interface{}{}
+				urlPath := strings.Replace(spURL, host, "", 1)
+				bodyMap := map[string]interface{}{
+					"__url_path": urlPath,
+				}
 				body := options.Get("body")
 				if body.String() == "<undefined>" {
 					// body = js.ValueOf(map[string]interface{}{}) <= this will err out as "Uncaught (in promise) Error: invalid character '<' looking for beginning of value"
@@ -336,8 +483,8 @@ func fetch(this js.Value, args []js.Value) interface{} {
 				}
 
 				// forward request to the layer8 proxy server
-				res = L8Client.Do(
-					url, utils.NewRequest(method, userHeaderMap, bodyByte),
+				res = client.Do(
+					spURL, utils.NewRequest(method, userHeaderMap, bodyByte),
 					userSymmetricKey, false, UpJWT, UUID)
 
 			case "multipart/form-data":
@@ -354,6 +501,17 @@ func fetch(this js.Value, args []js.Value) interface{} {
 					dataLength = js.Global().Get("Array").Call("from", body.Call("keys")).Get("length").Int()
 					formdata   = make(map[string]interface{}, dataLength)
 				)
+
+				urlPath := strings.Replace(spURL, host, "", 1)
+
+				dataToAdd := map[string]interface{}{
+					"_type": "String",
+					"value": urlPath,
+				}
+
+				if _, ok := formdata["__url_path"]; !ok {
+					formdata["__url_path"] = []map[string]interface{}{dataToAdd}
+				}
 
 				js.Global().Get("Array").Call("from", body.Call("keys")).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 					var (
@@ -439,8 +597,8 @@ func fetch(this js.Value, args []js.Value) interface{} {
 				}
 
 				// forward request to the layer8 proxy server
-				res = L8Client.Do( // RAVI TODO: Get a single client working again.
-					url, utils.NewRequest(method, userHeaderMap, bodyByte),
+				res = client.Do( // RAVI TODO: Get a single client working again.
+					spURL, utils.NewRequest(method, userHeaderMap, bodyByte),
 					userSymmetricKey, false, UpJWT, UUID)
 			default:
 				res = &utils.Response{
@@ -466,7 +624,7 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			}
 
 			reject.Invoke(js.Global().Get("Error").New(res.StatusText))
-			fmt.Printf("[interceptor] fetch status %s. Error txt: %s", res.Status, res.StatusText)
+			fmt.Printf("[interceptor] fetch status %d. Error txt: %s", res.Status, res.StatusText)
 			return
 		}()
 		return nil
@@ -477,14 +635,44 @@ func fetch(this js.Value, args []js.Value) interface{} {
 }
 
 func getStatic(this js.Value, args []js.Value) interface{} {
-	url := args[0].String()
+	spURL := args[0].String()
 
 	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		resolve := args[0]
+		reject := args[1]
 
-		go func() {
-			resp := L8Client.Do(
-				url, utils.NewRequest("GET", make(map[string]string), nil),
+		pURL, err := url.Parse(spURL)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+		client := L8Clients[pURL.Scheme+"://"+pURL.Host]
+
+		host, err := getHost(spURL)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+
+		host = host + staticPath
+
+		urlPath := strings.Replace(spURL, host, "", 1)
+
+		bodyMap := map[string]interface{}{
+			"__url_path": urlPath,
+		}
+
+		bodyByte, err := json.Marshal(bodyMap)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+
+		// fetch the static file from the server and store it in the cache
+		fetchStatic := func() {
+
+			resp := client.Do(
+				host, utils.NewRequest("GET", make(map[string]string), bodyByte),
 				userSymmetricKey, true, UpJWT, UUID)
 
 			// convert response body to js arraybuffer
@@ -497,13 +685,55 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 				resHeaders.Call("append", js.ValueOf(k), js.ValueOf(v))
 			}
 
+			fileType := resHeaders.Call("get", js.ValueOf("content-type"))
+
+			// store the file in the cache
+			db := OpenDB(INDEXEDDB_CACHE, reject)
+			db.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+				db := args[0].Get("target").Get("result")
+				tx := db.Call("transaction", "static", "readwrite")
+				store := tx.Call("objectStore", "static")
+				store.Call("put", js.ValueOf(map[string]interface{}{
+					"url":  spURL,
+					"body": jsBody,
+					"type": fileType,
+					"_exp": time.Now().Add(INDEXEDDB_CACHE_TTL).Unix(),
+				}))
+				return nil
+			}))
+
+			// convert the response body to a blob and resolve the promise
 			blob := js.Global().Get("Blob").New([]interface{}{jsBody}, js.ValueOf(map[string]interface{}{
-				"type": resHeaders.Call("get", js.ValueOf("content-type")),
+				"type": fileType,
 			}))
 			objURL := js.Global().Get("URL").Call("createObjectURL", blob)
-
 			resolve.Invoke(objURL)
-		}()
+		}
+
+		// check if the file is in the cache
+		db := OpenDB(INDEXEDDB_CACHE, reject)
+		db.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+			db := args[0].Get("target").Get("result")
+			tx := db.Call("transaction", "static", "readonly")
+			store := tx.Call("objectStore", "static")
+			index := store.Call("index", "url")
+			req := index.Call("get", spURL)
+			req.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+				if req.Get("result").IsUndefined() {
+					// if the file is not in the cache, fetch it from the server
+					go fetchStatic()
+				} else {
+					data := req.Get("result")
+					blob := js.Global().Get("Blob").New([]interface{}{js.ValueOf(data.Get("body"))}, js.ValueOf(map[string]interface{}{
+						"type": data.Get("type"),
+					}))
+					objURL := js.Global().Get("URL").Call("createObjectURL", blob)
+					resolve.Invoke(objURL)
+				}
+				return nil
+			}))
+			return nil
+		}))
 
 		return nil
 	}))

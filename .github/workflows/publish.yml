@@ -1,7 +1,8 @@
 # This Action Pubhlishes to NPM Automatically.
 on:
-  push: # event 
-    branches: main # configuration or Activity types?
+  workflow_dispatch:
+  push:
+    branches: main
 
 jobs:
   publish: # Name
@@ -16,6 +17,7 @@ jobs:
           node-version: "20"
       - name: Run Testing
         run: npm test
+        # YOU NEED A BUILD STEP TO POPULATE THE DIST FOLDER!
       - name: Publish to NPM 
         uses: JS-DevTools/npm-publish@v3
         with:
