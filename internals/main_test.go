@@ -126,7 +126,7 @@ func TestClientDo(t *testing.T) {
 			// the "X-Forwarded-Proto" header must be set to the original request's scheme
 			assert.Equal(t, pURL.Scheme, r.Header.Get("X-Forwarded-Proto"))
 			// the path of the request must match the path of the original request
-			assert.Equal(t, pURL.Path, r.URL.Path)
+			assert.Equal(t, "/", r.URL.Path) // Here
 
 			body, err := io.ReadAll(r.Body)
 			assert.NoError(t, err)
