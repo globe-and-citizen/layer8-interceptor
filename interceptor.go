@@ -40,6 +40,7 @@ var (
 	userSymmetricKey    *utils.JWK
 	UpJWT               string
 	UUID                string
+	staticPath          string
 	L8Clients           map[string]internals.ClientImpl = make(map[string]internals.ClientImpl)
 
 	// IndexedDBs is a map of the IndexedDBs that the interceptor uses
@@ -228,6 +229,8 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 					proxy = os.Getenv("LAYER8_PROXY")
 				}
 			}
+		case "staticPath":
+			staticPath = args[0].Index(1).String()
 		default:
 			ErrorDestructuringConfigObject = true
 		}
@@ -457,7 +460,10 @@ func fetch(this js.Value, args []js.Value) interface{} {
 			switch strings.ToLower(userHeaderMap["Content-Type"]) {
 			case "application/json": // Note this is the default that GET requests travel through
 				// Converting the body to Golag or setting it as null/nil
-				bodyMap := map[string]interface{}{}
+				urlPath := strings.Replace(spURL, host, "", 1)
+				bodyMap := map[string]interface{}{
+					"__url_path": urlPath,
+				}
 				body := options.Get("body")
 				if body.String() == "<undefined>" {
 					// body = js.ValueOf(map[string]interface{}{}) <= this will err out as "Uncaught (in promise) Error: invalid character '<' looking for beginning of value"
@@ -495,6 +501,17 @@ func fetch(this js.Value, args []js.Value) interface{} {
 					dataLength = js.Global().Get("Array").Call("from", body.Call("keys")).Get("length").Int()
 					formdata   = make(map[string]interface{}, dataLength)
 				)
+
+				urlPath := strings.Replace(spURL, host, "", 1)
+
+				dataToAdd := map[string]interface{}{
+					"_type": "String",
+					"value": urlPath,
+				}
+
+				if _, ok := formdata["__url_path"]; !ok {
+					formdata["__url_path"] = []map[string]interface{}{dataToAdd}
+				}
 
 				js.Global().Get("Array").Call("from", body.Call("keys")).Call("forEach", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 					var (
@@ -631,10 +648,31 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		}
 		client := L8Clients[pURL.Scheme+"://"+pURL.Host]
 
+		host, err := getHost(spURL)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+
+		host = host + staticPath
+
+		urlPath := strings.Replace(spURL, host, "", 1)
+
+		bodyMap := map[string]interface{}{
+			"__url_path": urlPath,
+		}
+
+		bodyByte, err := json.Marshal(bodyMap)
+		if err != nil {
+			reject.Invoke(js.Global().Get("Error").New(err.Error()))
+			return nil
+		}
+
 		// fetch the static file from the server and store it in the cache
 		fetchStatic := func() {
+
 			resp := client.Do(
-				spURL, utils.NewRequest("GET", make(map[string]string), nil),
+				host, utils.NewRequest("GET", make(map[string]string), bodyByte),
 				userSymmetricKey, true, UpJWT, UUID)
 
 			// convert response body to js arraybuffer
