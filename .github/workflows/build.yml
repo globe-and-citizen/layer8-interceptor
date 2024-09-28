@@ -27,7 +27,7 @@ jobs:
           sudo cp -r binaryen-version_113/* /usr/local/
       - name: Build WASM
         env:
-          GOOJS: js
+          GOOS: js
           GOARCH: wasm
         run: go build -ldflags="-X main.Layer8Scheme=${{ vars.LAYER8_PROXY_SCHEME }} -X main.Layer8Host=${{ vars.LAYER8_PROXY_DOMAIN }} -X main.Layer8Port=${{ vars.LAYER8_PROXY_PORT }}" -o ./bin/interceptor.wasm ./interceptor.go
       - name: Optimize WASM
