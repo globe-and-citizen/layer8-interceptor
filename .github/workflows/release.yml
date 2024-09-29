@@ -5,10 +5,6 @@ on:
       - created
   push:
 
-permissions:
-  contents: read
-  packages: write
-
 jobs:
   build:
     name: Build WASM Package
@@ -66,13 +62,16 @@ jobs:
     name: Publish Node Package
     needs: s3
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          registry-url: https://npm.pkg.github.com/
+          registry-url: 'https://npm.pkg.github.com'
       - name: Install Utilities
         run: sudo apt-get install jq moreutils
       - name: Setup WASM Config
@@ -80,7 +79,7 @@ jobs:
       - name: Install Dependencies
         run: npm install
       - name: Publish Package
-        run: npm publish --access public
+        run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
