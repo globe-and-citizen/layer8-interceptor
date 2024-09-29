@@ -5,6 +5,10 @@ on:
       - created
   push:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     name: Build WASM Package
