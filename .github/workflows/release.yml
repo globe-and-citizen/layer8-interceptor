@@ -70,16 +70,15 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: 'https://npm.pkg.github.com'
+          registry-url: https://npm.pkg.github.com/
       - name: Install Utilities
         run: sudo apt-get install jq moreutils
       - name: Setup WASM Config
         run: jq '.wasm_url = "${{vars.CLOUDFRONT_CDN_DOMAIN}}/${{ github.sha }}"' config.json | sponge config.json
       - name: Install Dependencies
-        run: npm install
+        run: yarn install
       - name: Publish Package
-        run: npm publish
+        run: yarn publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
