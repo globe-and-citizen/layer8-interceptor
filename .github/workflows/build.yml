@@ -45,6 +45,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: interceptor
@@ -55,6 +56,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Upload WASM to S3
-        run: aws s3 cp bin/interceptor.wasm s3://layer8-interceptor/${{ github.sha }}.wasm
+        run: aws s3 cp bin/interceptor.wasm.br s3://layer8-interceptor/${{ github.sha }}.wasm
 
         
