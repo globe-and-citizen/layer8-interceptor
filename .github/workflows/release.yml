@@ -1,0 +1,83 @@
+name: Release
+on:
+  release:
+    types:
+      - created
+  push:
+
+jobs:
+  build:
+    name: Build WASM Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Brotli
+        run: npm install -g brotli
+      - name: Install Binaryen (wasm-opt)
+        run: |
+          wget https://github.com/WebAssembly/binaryen/releases/download/version_113/binaryen-version_113-x86_64-linux.tar.gz
+          tar -xzf binaryen-version_113-x86_64-linux.tar.gz
+          sudo cp -r binaryen-version_113/* /usr/local/
+      - name: Build WASM
+        env:
+          GOOS: js
+          GOARCH: wasm
+        run: go build -ldflags="-X main.Layer8Scheme=${{ vars.LAYER8_PROXY_SCHEME }} -X main.Layer8Host=${{ vars.LAYER8_PROXY_DOMAIN }} -X main.Layer8Port=${{ vars.LAYER8_PROXY_PORT }}" -o ./bin/interceptor.wasm ./interceptor.go
+      - name: Optimize WASM
+        run: wasm-opt -O3 bin/interceptor.wasm -o bin/interceptor.wasm --enable-bulk-memory
+      - name: Compress WASM
+        run: brotli -q 11 -o bin/interceptor.wasm.br bin/interceptor.wasm
+      - name: Upload WASM
+        uses: actions/upload-artifact@v4
+        with:
+          name: interceptor
+          path: bin/
+  s3:
+    name: Upload WASM File to CDN
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: interceptor
+          path: bin/
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Upload WASM to S3
+        run: aws s3 cp bin/interceptor.wasm.br s3://layer8-interceptor/${{ github.sha }}.wasm.br --content-encoding br --content-type application/wasm --acl public-read
+  publish:
+    name: Publish Node Package
+    needs: s3
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          registry-url: https://npm.pkg.github.com/
+      - name: Install Utilities
+        run: sudo apt-get install jq moreutils
+      - name: Setup WASM Config
+        run: jq '.wasm_url = "${{vars.CLOUDFRONT_CDN_DOMAIN}}/${{ github.sha }}"' config.json | sponge config.json
+      - name: Install Dependencies
+        run: npm install
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+      
