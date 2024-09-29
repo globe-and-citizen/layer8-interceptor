@@ -73,9 +73,12 @@ jobs:
         run: sudo apt-get install jq moreutils
       - name: Setup WASM Config
         run: jq '.wasm_url = "${{vars.CLOUDFRONT_CDN_DOMAIN}}/${{ github.sha }}"' config.json | sponge config.json
+      - name: Setup Node Config
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
       - name: Install Dependencies
         run: npm install
       - run: npm publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
+          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
       
