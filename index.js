@@ -1,21 +1,9 @@
-// IMPORTS
-import wasmBin from "./dist/interceptor.json";
-import "./dist/wasm_exec.js";
+import './wasm_exec.js';
+import { wasm_url} from './config.json'
 
-// GLOBALS
 let l8Ready = false;
 let callbackObjectArray = [];
 let layer8;
-
-// UTILITY FUNCS
-const decode = (encoded) => {
-  var str = atob(encoded);
-  var bytes = new Uint8Array(str.length);
-  for (var i = 0; i < str.length; i++) {
-    bytes[i] = str.charCodeAt(i);
-  }
-  return bytes.buffer;
-};
 
 function illGetBackToYou(_func_name, _resolve, _reject, _args) {
   callbackObjectArray.push({
@@ -41,15 +29,16 @@ function triggerCallbacks() {
   });
 }
 
-// MODULE LOAD & INITIAZLIZE
-const go = new window.Go();
-const importObject = go.importObject;
-WebAssembly.instantiate(decode(wasmBin), importObject).then((result) => {
+
+const go = new Go();
+WebAssembly.instantiateStreaming(fetch(wasm_url), go.importObject).
+then((result) => {
   go.run(result.instance);
   l8Ready = true;
   layer8 = window.layer8;
   triggerCallbacks();
-});
+}); 
+
 
 // EXPORTS
 export default {

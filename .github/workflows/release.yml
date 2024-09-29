@@ -1,4 +1,4 @@
-name: Build WASM Package
+name: Release
 on:
   release:
     types:
@@ -41,7 +41,7 @@ jobs:
           name: interceptor
           path: bin/
   s3:
-    name: Upload WASM Package to CDN
+    name: Upload WASM File to CDN
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -57,5 +57,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Upload WASM to S3
-        run: aws s3 cp bin/interceptor.wasm.br s3://layer8-interceptor/${{ github.sha }}.wasm.br --content-encoding br --content-type application/wasm
-        
+        run: aws s3 cp bin/interceptor.wasm.br s3://layer8-interceptor/${{ github.sha }}.wasm.br --content-encoding br --content-type application/wasm --acl public-read
+  publish:
+    name: Publish Node Package
+    needs: s3
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://npm.pkg.github.com/
+      - name: Install Utilities
+        run: apt-get install jq moreutils
+      - name: Setup WASM Config
+        run: jq '.wasm_url = "${{vars.CLOUDFRONT_CDN_DOMAIN}}/${{ github.sha }}"' config.json | sponge config.json
+      - name: Install Dependencies
+        run: npm install
+      - name: Publish Package
+        run: npm publish --access public
+      

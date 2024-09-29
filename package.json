@@ -1,6 +1,7 @@
 {
-  "name": "layer8_interceptor",
-  "version": "0.0.18",
+  "name": "layer8interceptor",
+  "version": "0.1.0",
+  "type": "module",
   "description": "This package allows Layer8 clients to connect to the remote Layer8 Server. It povides the 1) stock WASM glue code 2) binary of the Interceptor, and 3) the index.js necessary to run it.   ",
   "main": "index.js",
   "types": "index.d.ts",
@@ -26,9 +27,11 @@
   },
   "homepage": "https://github.com/globe-and-citizen/layer8-interceptor#readme",
   "files": [
-    "./dist/interceptor.json",
-    "./dist/wasm_exec.js",
+    "index.js",
+    "wasm_exec.js",
     "index.d.ts",
-    "index.js"
-  ]
+    "config.json"
+  ],
+  "dependencies": {
+  }
 }
