@@ -70,7 +70,7 @@ jobs:
           node-version: '20'
           registry-url: https://npm.pkg.github.com/
       - name: Install Utilities
-        run: apt-get install jq moreutils
+        run: sudo apt-get install jq moreutils
       - name: Setup WASM Config
         run: jq '.wasm_url = "${{vars.CLOUDFRONT_CDN_DOMAIN}}/${{ github.sha }}"' config.json | sponge config.json
       - name: Install Dependencies
