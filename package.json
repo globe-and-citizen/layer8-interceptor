@@ -1,5 +1,5 @@
 {
-  "name": "layer8interceptor",
+  "name": "@globe-and-citizen/layer8-interceptor",
   "version": "0.1.0",
   "type": "module",
   "publishConfig": {
