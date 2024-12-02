@@ -664,7 +664,7 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 		for _, staticPath := range staticPaths {
 			if strings.Contains(spURL, staticPath) {
 				host = host + staticPath
-				fmt.Println("[Interceptor] getStatic host: ", host)
+				// fmt.Println("[Interceptor] getStatic host: ", host)
 				break
 			}
 		}
