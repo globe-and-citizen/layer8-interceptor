@@ -40,7 +40,7 @@ var (
 	userSymmetricKey    *utils.JWK
 	UpJWT               string
 	UUID                string
-	staticPath          string
+	staticPaths         []string
 	L8Clients           map[string]internals.ClientImpl = make(map[string]internals.ClientImpl)
 
 	// IndexedDBs is a map of the IndexedDBs that the interceptor uses
@@ -229,8 +229,13 @@ func initializeECDHTunnel(this js.Value, args []js.Value) interface{} {
 					proxy = os.Getenv("LAYER8_PROXY")
 				}
 			}
-		case "staticPath":
-			staticPath = args[0].Index(1).String()
+		case "staticPaths":
+			staticPaths = make([]string, args[0].Index(1).Length())
+			for i := 0; i < args[0].Index(1).Get("length").Int(); i++ {
+				staticPaths[i] = args[0].Index(1).Index(i).String()
+				// fmt.Println("staticPath: ", staticPaths[i])
+			}
+
 		default:
 			ErrorDestructuringConfigObject = true
 		}
@@ -636,7 +641,8 @@ func fetch(this js.Value, args []js.Value) interface{} {
 
 func getStatic(this js.Value, args []js.Value) interface{} {
 	spURL := args[0].String()
-
+	fmt.Println("[Interceptor] getStatic spURL: ", spURL)
+	
 	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		resolve := args[0]
 		reject := args[1]
@@ -654,7 +660,14 @@ func getStatic(this js.Value, args []js.Value) interface{} {
 			return nil
 		}
 
-		host = host + staticPath
+		// Check spURL and match the staticPath with the spURL
+		for _, staticPath := range staticPaths {
+			if strings.Contains(spURL, staticPath) {
+				host = host + staticPath
+				// fmt.Println("[Interceptor] getStatic host: ", host)
+				break
+			}
+		}
 
 		urlPath := strings.Replace(spURL, host, "", 1)
 
